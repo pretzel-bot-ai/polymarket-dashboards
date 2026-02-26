@@ -40,6 +40,20 @@ interface RewardsMarket {
   competitiveness: number;
 }
 
+interface Activity {
+  timestamp: number;
+  type: 'TRADE' | 'REDEEM' | 'YIELD' | 'REWARD';
+  side: string | null;
+  title: string | null;
+  outcome: string | null;
+  size: number;
+  usdcSize: number;
+  price: number;
+  slug: string | null;
+  eventSlug: string | null;
+  transactionHash: string | null;
+}
+
 interface DashboardData {
   wallet: string;
   updatedAt: string;
@@ -47,6 +61,7 @@ interface DashboardData {
     totalValue: number;
     positionsValue: number;
     cashBalance: number;
+    onChainUsdc: number;
     unrealizedPnl: number;
     realizedPnl: number;
     totalPnl: number;
@@ -67,6 +82,7 @@ interface DashboardData {
     active: RewardsMarket[];
     top: RewardsMarket[];
   };
+  activity: Activity[];
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -100,11 +116,19 @@ function pnlColor(n: number): string {
   return 'text-gray-400';
 }
 
-function timeAgo(iso: string): string {
-  const secs = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+function timeAgo(isoOrTs: string | number): string {
+  const ms = typeof isoOrTs === 'number' ? isoOrTs * 1000 : new Date(isoOrTs).getTime();
+  const secs = Math.floor((Date.now() - ms) / 1000);
   if (secs < 60) return `${secs}s ago`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
-  return `${Math.floor(secs / 3600)}h ago`;
+  if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+  return `${Math.floor(secs / 86400)}d ago`;
+}
+
+function fmtDate(ts: number): string {
+  return new Date(ts * 1000).toLocaleString('en-GB', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false,
+  });
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -256,6 +280,126 @@ function PnlBreakdown({ markets, label }: { markets: MarketPnl[]; label: string 
   );
 }
 
+type ActivityFilter = 'ALL' | 'BUY' | 'SELL' | 'REDEEM' | 'YIELD' | 'REWARD';
+
+function activityBadge(a: Activity): { label: string; cls: string } {
+  if (a.type === 'TRADE') {
+    const isBuy = a.side === 'BUY';
+    return isBuy
+      ? { label: 'BUY', cls: 'text-green-400 border-green-800' }
+      : { label: 'SELL', cls: 'text-red-400 border-red-900' };
+  }
+  if (a.type === 'REDEEM') return { label: 'SETTLE', cls: 'text-amber-400 border-amber-800' };
+  if (a.type === 'YIELD')  return { label: 'YIELD',  cls: 'text-cyan-400 border-cyan-900' };
+  if (a.type === 'REWARD') return { label: 'REWARD', cls: 'text-purple-400 border-purple-900' };
+  return { label: a.type, cls: 'text-gray-400 border-gray-700' };
+}
+
+function ActivityFeed({ activity }: { activity: Activity[] }) {
+  const [filter, setFilter] = useState<ActivityFilter>('ALL');
+  const [showAll, setShowAll] = useState(false);
+
+  const filters: ActivityFilter[] = ['ALL', 'BUY', 'SELL', 'REDEEM', 'YIELD', 'REWARD'];
+
+  const filtered = activity.filter(a => {
+    if (filter === 'ALL') return true;
+    if (filter === 'BUY')    return a.type === 'TRADE' && a.side === 'BUY';
+    if (filter === 'SELL')   return a.type === 'TRADE' && a.side === 'SELL';
+    if (filter === 'REDEEM') return a.type === 'REDEEM';
+    if (filter === 'YIELD')  return a.type === 'YIELD';
+    if (filter === 'REWARD') return a.type === 'REWARD';
+    return true;
+  });
+
+  const display = showAll ? filtered : filtered.slice(0, 50);
+
+  return (
+    <div>
+      {/* Filter bar */}
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {filters.map(f => (
+          <button
+            key={f}
+            onClick={() => { setFilter(f); setShowAll(false); }}
+            className={`text-xs px-2 py-0.5 border ${
+              filter === f
+                ? 'border-amber-500 text-amber-300 bg-amber-900/30'
+                : 'border-gray-800 text-gray-600 hover:border-amber-800 hover:text-amber-600'
+            }`}
+          >
+            {f}
+          </button>
+        ))}
+        <span className="ml-auto text-xs text-gray-600">{filtered.length} events</span>
+      </div>
+
+      {/* Header */}
+      <div className="grid grid-cols-[80px_70px_2fr_1fr_1fr_80px] gap-x-3 text-xs text-amber-600 tracking-widest pb-1 border-b border-amber-900 mb-1">
+        <div>TIME</div>
+        <div>TYPE</div>
+        <div>MARKET</div>
+        <div>SIDE/OUTCOME</div>
+        <div className="text-right">USDC</div>
+        <div className="text-right">TX</div>
+      </div>
+
+      {/* Rows */}
+      {display.length === 0 ? (
+        <div className="text-gray-600 text-xs py-2">No events</div>
+      ) : display.map((a, i) => {
+        const badge = activityBadge(a);
+        const marketTitle = a.title || (a.type === 'YIELD' ? 'USDC Yield' : a.type === 'REWARD' ? 'LP Reward' : '—');
+        const sideLabel = a.type === 'TRADE'
+          ? `${a.side} ${a.outcome || ''} @ $${a.price.toFixed(3)}`
+          : a.type === 'REDEEM' ? 'Settlement' : '—';
+        const polyUrl = a.eventSlug ? `https://polymarket.com/event/${a.eventSlug}` : null;
+        const txUrl = a.transactionHash ? `https://polygonscan.com/tx/${a.transactionHash}` : null;
+
+        return (
+          <div
+            key={i}
+            className="grid grid-cols-[80px_70px_2fr_1fr_1fr_80px] gap-x-3 text-xs py-0.5 border-b border-gray-900 hover:bg-amber-900/10 transition-colors"
+          >
+            <div className="text-gray-600 font-mono" title={fmtDate(a.timestamp)}>
+              {timeAgo(a.timestamp)}
+            </div>
+            <div>
+              <span className={`border px-1 font-mono text-xs ${badge.cls}`}>{badge.label}</span>
+            </div>
+            <div className="text-gray-300 truncate">
+              {polyUrl ? (
+                <a href={polyUrl} target="_blank" rel="noopener noreferrer" className="hover:text-amber-300" title={marketTitle}>
+                  {truncate(marketTitle, 48)}
+                </a>
+              ) : truncate(marketTitle, 48)}
+            </div>
+            <div className="text-gray-500 truncate font-mono">{sideLabel}</div>
+            <div className={`text-right font-mono ${a.type === 'TRADE' && a.side === 'BUY' ? 'text-red-400' : 'text-green-400'}`}>
+              {a.type === 'TRADE' && a.side === 'BUY' ? '-' : '+'}{fmt$(a.usdcSize, 2).replace(/^[+-]/, '')}
+            </div>
+            <div className="text-right">
+              {txUrl ? (
+                <a href={txUrl} target="_blank" rel="noopener noreferrer" className="text-gray-700 hover:text-amber-400 font-mono">
+                  ↗ TX
+                </a>
+              ) : '—'}
+            </div>
+          </div>
+        );
+      })}
+
+      {filtered.length > 50 && (
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className="mt-2 text-xs text-amber-700 hover:text-amber-400"
+        >
+          {showAll ? '▲ SHOW LESS' : `▼ SHOW ALL ${filtered.length} EVENTS`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -306,7 +450,7 @@ export default function Dashboard() {
     );
   }
 
-  const { portfolio, pnl, categoryPnl, positions, rewards } = data;
+  const { portfolio, pnl, categoryPnl, positions, rewards, activity } = data;
   const maxCatAbs = Math.max(...categoryPnl.map(c => Math.abs(c.total)), 1);
 
   // LP rewards display
@@ -352,18 +496,18 @@ export default function Dashboard() {
         <StatCard
           label="PORTFOLIO VALUE"
           value={fmt$(portfolio.totalValue)}
-          sub={`positions ${fmt$(portfolio.positionsValue)} + cash ${fmt$(portfolio.cashBalance)}`}
+          sub={`positions ${fmt$(portfolio.positionsValue)} + cash ${fmt$(portfolio.onChainUsdc, 2)}`}
         />
         <StatCard
-          label="TOTAL P&L (UNREAL.)"
+          label="UNREALIZED P&L"
           value={fmt$(portfolio.unrealizedPnl)}
-          sub="unrealized across all positions"
+          sub="open positions only"
           valueClass={pnlColor(portfolio.unrealizedPnl)}
         />
         <StatCard
-          label="TOTAL REALIZED P&L"
+          label="REALIZED P&L"
           value={fmt$(portfolio.realizedPnl)}
-          sub="lifetime realized"
+          sub="settled + closed positions"
           valueClass={pnlColor(portfolio.realizedPnl)}
         />
         <StatCard
@@ -377,7 +521,7 @@ export default function Dashboard() {
       {/* Middle Row: PnL by Period + Category */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         {/* PnL Overview */}
-        <Panel title="TRADING P&L — NET CASH FLOW">
+        <Panel title="REALIZED CASH FLOW (TRADES + REDEEMS + REWARDS)">
           <div className="flex gap-2 mb-3">
             {(['day', 'week', 'month'] as const).map(tab => (
               <button
@@ -465,8 +609,13 @@ export default function Dashboard() {
       </Panel>
 
       {/* Positions Table */}
-      <Panel title={`OPEN POSITIONS (${portfolio.openCount} active / ${portfolio.totalPositions} total)`}>
+      <Panel title={`OPEN POSITIONS (${portfolio.openCount} active / ${portfolio.totalPositions} total)`} className="mb-3">
         <PositionsTable positions={positions} />
+      </Panel>
+
+      {/* Activity Feed */}
+      <Panel title={`ACCOUNT ACTIVITY (${data.activity.length} events)`} className="mb-3">
+        <ActivityFeed activity={data.activity} />
       </Panel>
 
       {/* Footer */}

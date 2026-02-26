@@ -62,6 +62,46 @@ async function fetchAllTrades(): Promise<any[]> {
   return results;
 }
 
+async function fetchOnChainUsdc(wallet: string): Promise<number> {
+  const USDC_NATIVE = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+  const USDC_E = '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174';
+  const padded = wallet.replace('0x', '').toLowerCase().padStart(64, '0');
+  const data = '0x70a08231' + padded; // balanceOf(address)
+
+  async function bal(contract: string): Promise<number> {
+    const r = await fetch('https://polygon.drpc.org', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_call', params: [{ to: contract, data }, 'latest'], id: 1 }),
+    });
+    const j = await r.json();
+    if (!j.result || j.result === '0x') return 0;
+    return parseInt(j.result, 16) / 1e6; // USDC has 6 decimals
+  }
+
+  const [native, bridged] = await Promise.all([bal(USDC_NATIVE), bal(USDC_E)]);
+  return native + bridged;
+}
+
+async function fetchActivity(): Promise<any[]> {
+  const results: any[] = [];
+  let offset = 0;
+  const limit = 200;
+  for (let i = 0; i < 10; i++) {
+    const res = await fetch(
+      `https://data-api.polymarket.com/activity?user=${WALLET}&limit=${limit}&offset=${offset}`,
+      { next: { revalidate: 60 } }
+    );
+    if (!res.ok) break;
+    const items = await res.json();
+    if (!Array.isArray(items) || items.length === 0) break;
+    results.push(...items);
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return results;
+}
+
 export async function GET() {
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -69,7 +109,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsRaw, valueData] = await Promise.all([
+    const [positions, trades, rewardsRaw, valueData, activity, onChainUsdc] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -81,6 +121,8 @@ export async function GET() {
       fetch(`https://data-api.polymarket.com/value?user=${WALLET}`, {
         next: { revalidate: 60 },
       }).then(r => r.json()).then(d => Array.isArray(d) ? d[0] : d).catch(() => null),
+      fetchActivity(),
+      fetchOnChainUsdc(WALLET).catch(() => 0),
     ]);
 
     // Categorize positions
@@ -93,8 +135,18 @@ export async function GET() {
     const positionsValue = categorized.reduce((s: number, p: any) => s + (p.currentValue || 0), 0);
     const totalValue = valueData?.value ?? positionsValue;
     const cashBalance = totalValue - positionsValue;
-    const totalUnrealized = categorized.reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
-    const totalRealized = categorized.reduce((s: number, p: any) => s + (p.realizedPnl || 0), 0);
+
+    // Positions with currentValue=0 are settled (market resolved against them).
+    // Their cashPnl (= -initialValue) is a realized loss, not unrealized.
+    const totalUnrealized = categorized
+      .filter((p: any) => (p.currentValue || 0) > 0)
+      .reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
+    const totalRealized = categorized.reduce((s: number, p: any) => {
+      const realized = p.realizedPnl || 0;
+      const settledLoss = (p.currentValue || 0) === 0 ? (p.cashPnl || 0) : 0;
+      return s + realized + settledLoss;
+    }, 0);
+
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
 
     // Category PnL
@@ -108,23 +160,30 @@ export async function GET() {
       .map(([cat, v]) => ({ category: cat, unrealized: v.unrealized, realized: v.realized, total: v.unrealized + v.realized }))
       .sort((a, b) => b.total - a.total);
 
-    // Time-based PnL (net cash flow: sell proceeds - buy costs)
-    function netFlow(cutoff: number) {
-      return trades
-        .filter((t: any) => t.timestamp >= cutoff)
-        .reduce((sum: number, t: any) => {
-          const val = (t.size || 0) * (t.price || 0);
-          return sum + (t.side === 'SELL' ? val : -val);
+    // Time-based realized flow: REDEEM proceeds + SELL proceeds - BUY costs.
+    // REDEEM = settled winning positions cashed out.
+    // This is actual USDC received/spent, not unrealized P&L on open positions.
+    function realizedFlow(cutoff: number) {
+      return activity
+        .filter((a: any) => a.timestamp >= cutoff)
+        .reduce((sum: number, a: any) => {
+          const usdc = a.usdcSize || 0;
+          if (a.type === 'REDEEM' || a.type === 'REWARD' || a.type === 'YIELD') return sum + usdc;
+          if (a.type === 'TRADE') return sum + (a.side === 'SELL' ? usdc : -usdc);
+          return sum;
         }, 0);
     }
 
-    // Top contributing markets per period
+    // Top contributing markets per period (by net USDC flow)
     function topMarkets(cutoff: number, n = 5) {
       const map: Record<string, number> = {};
-      for (const t of trades.filter((t: any) => t.timestamp >= cutoff)) {
-        const val = (t.size || 0) * (t.price || 0);
-        const flow = t.side === 'SELL' ? val : -val;
-        map[t.title] = (map[t.title] || 0) + flow;
+      for (const a of activity.filter((a: any) => a.timestamp >= cutoff)) {
+        const usdc = a.usdcSize || 0;
+        const title = a.title || (a.type === 'REWARD' ? 'LP Reward' : a.type === 'YIELD' ? 'USDC Yield' : '?');
+        let flow = 0;
+        if (a.type === 'REDEEM' || a.type === 'REWARD' || a.type === 'YIELD') flow = usdc;
+        else if (a.type === 'TRADE') flow = a.side === 'SELL' ? usdc : -usdc;
+        if (flow !== 0) map[title] = (map[title] || 0) + flow;
       }
       return Object.entries(map)
         .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
@@ -162,6 +221,7 @@ export async function GET() {
         totalValue,
         positionsValue,
         cashBalance,
+        onChainUsdc,
         unrealizedPnl: totalUnrealized,
         realizedPnl: totalRealized,
         totalPnl: totalUnrealized + totalRealized,
@@ -169,9 +229,9 @@ export async function GET() {
         totalPositions: categorized.length,
       },
       pnl: {
-        day: netFlow(cutoff1d),
-        week: netFlow(cutoff7d),
-        month: netFlow(cutoff30d),
+        day: realizedFlow(cutoff1d),
+        week: realizedFlow(cutoff7d),
+        month: realizedFlow(cutoff30d),
         dayMarkets: topMarkets(cutoff1d),
         weekMarkets: topMarkets(cutoff7d),
         monthMarkets: topMarkets(cutoff30d),
@@ -182,6 +242,19 @@ export async function GET() {
         active: activeRewards,
         top: topRewards,
       },
+      activity: activity.map((a: any) => ({
+        timestamp: a.timestamp,
+        type: a.type,
+        side: a.side || null,
+        title: a.title || null,
+        outcome: a.outcome || null,
+        size: a.size || 0,
+        usdcSize: a.usdcSize || 0,
+        price: a.price || 0,
+        slug: a.slug || null,
+        eventSlug: a.eventSlug || null,
+        transactionHash: a.transactionHash || null,
+      })),
     });
   } catch (e) {
     console.error('Dashboard API error:', e);
