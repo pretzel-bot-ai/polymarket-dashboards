@@ -133,8 +133,8 @@ export async function GET() {
 
     // Portfolio summary
     const positionsValue = categorized.reduce((s: number, p: any) => s + (p.currentValue || 0), 0);
-    const totalValue = valueData?.value ?? positionsValue;
-    const cashBalance = totalValue - positionsValue;
+    const totalValue = positionsValue + onChainUsdc;
+    const cashBalance = onChainUsdc;
 
     // Positions with currentValue=0 are settled (market resolved against them).
     // Their cashPnl (= -initialValue) is a realized loss, not unrealized.
