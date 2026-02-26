@@ -136,16 +136,17 @@ export async function GET() {
     const totalValue = positionsValue + onChainUsdc;
     const cashBalance = onChainUsdc;
 
-    // Positions with currentValue=0 are settled (market resolved against them).
-    // Their cashPnl (= -initialValue) is a realized loss, not unrealized.
+    // unrealized = mark-to-market on open positions (cashPnl where currentValue > 0)
+    // realized   = sum of realizedPnl from the positions API (completed trade gains)
+    // total      = sum(cashPnl + realizedPnl) for ALL positions — this captures settled
+    //              losses implicitly via cashPnl going to -initialValue on resolution
     const totalUnrealized = categorized
       .filter((p: any) => (p.currentValue || 0) > 0)
       .reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
-    const totalRealized = categorized.reduce((s: number, p: any) => {
-      const realized = p.realizedPnl || 0;
-      const settledLoss = (p.currentValue || 0) === 0 ? (p.cashPnl || 0) : 0;
-      return s + realized + settledLoss;
-    }, 0);
+    const totalRealized = categorized
+      .reduce((s: number, p: any) => s + (p.realizedPnl || 0), 0);
+    const totalPnl = categorized
+      .reduce((s: number, p: any) => s + (p.cashPnl || 0) + (p.realizedPnl || 0), 0);
 
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
 
@@ -224,7 +225,7 @@ export async function GET() {
         onChainUsdc,
         unrealizedPnl: totalUnrealized,
         realizedPnl: totalRealized,
-        totalPnl: totalUnrealized + totalRealized,
+        totalPnl,
         openCount,
         totalPositions: categorized.length,
       },

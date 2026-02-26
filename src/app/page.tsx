@@ -507,13 +507,13 @@ export default function Dashboard() {
         <StatCard
           label="REALIZED P&L"
           value={fmt$(portfolio.realizedPnl)}
-          sub="settled + closed positions"
+          sub="completed trades & redeems"
           valueClass={pnlColor(portfolio.realizedPnl)}
         />
         <StatCard
-          label="COMBINED P&L"
+          label="NET P&L"
           value={fmt$(portfolio.totalPnl)}
-          sub="unrealized + realized"
+          sub="incl. settled losses"
           valueClass={pnlColor(portfolio.totalPnl)}
         />
       </div>
