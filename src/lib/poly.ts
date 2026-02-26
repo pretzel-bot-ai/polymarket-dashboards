@@ -1,25 +1,11 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
+// Data fetching is handled directly in src/app/api/data/route.ts via Polymarket public APIs.
+// This file is kept as a placeholder.
 
-const execPromise = promisify(exec);
-const POLY_BINARY = path.join(process.cwd(), '..', 'bin', 'polymarket');
-
-export async function fetchPolyData(command: string, address: string) {
-  try {
-    const { stdout } = await execPromise(`${POLY_BINARY} -o json data ${command} ${address}`);
-    return JSON.parse(stdout);
-  } catch (error) {
-    console.error(`Error fetching ${command}:`, error);
-    return null;
-  }
-}
-
-export function autoCategorize(title: string) {
+export function autoCategorize(title: string): string {
   const t = title.toLowerCase();
-  if (t.includes('ai') || t.includes('google') || t.includes('openai') || t.includes('claude') || t.includes('deepseek')) return 'AI & Tech';
-  if (t.includes('insider trading') || t.includes('accused') || t.includes('nominate') || t.includes('fed')) return 'Regulatory & Finance';
-  if (t.includes('win') || t.includes('election') || t.includes('nomination') || t.includes('president')) return 'Politics';
-  if (t.includes('etf') || t.includes('bitcoin') || t.includes('crypto')) return 'Crypto';
+  if (t.includes('openai') || t.includes('claude') || t.includes('deepseek') || t.includes('gpt')) return 'AI & Tech';
+  if (t.includes('bitcoin') || t.includes('btc') || t.includes('crypto') || t.includes('solana')) return 'Crypto & Finance';
+  if (t.includes('election') || t.includes('president') || t.includes('nomination')) return 'Politics';
+  if (t.includes('nba') || t.includes('nfl') || t.includes('championship') || t.includes('super bowl')) return 'Sports';
   return 'Other';
 }
