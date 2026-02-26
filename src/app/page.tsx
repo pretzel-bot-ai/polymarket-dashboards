@@ -265,6 +265,69 @@ function PositionsTable({ positions }: { positions: Position[] }) {
   );
 }
 
+type PnlTab = '1d' | '7d' | '30d' | 'all';
+
+function PnlStatsPanel({ portfolio, pnl }: {
+  portfolio: DashboardData['portfolio'];
+  pnl: DashboardData['pnl'];
+}) {
+  const [tab, setTab] = useState<PnlTab>('all');
+
+  const tabs: { key: PnlTab; label: string }[] = [
+    { key: '1d', label: '1D' },
+    { key: '7d', label: '7D' },
+    { key: '30d', label: '30D' },
+    { key: 'all', label: 'ALL' },
+  ];
+
+  const periodFlow = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : null;
+  const unrealized = portfolio.unrealizedPnl;
+  const realized = periodFlow !== null ? periodFlow : portfolio.realizedPnl;
+  const net = periodFlow !== null ? periodFlow + unrealized : portfolio.totalPnl;
+
+  const realizedSub = tab === 'all' ? 'completed trades' : tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d';
+  const netSub = tab === 'all' ? 'incl. settled losses' : 'flow + unrealized';
+
+  return (
+    <div className="md:col-span-3 border border-amber-800">
+      <div className="bg-amber-900/20 border-b border-amber-800 px-3 py-1 flex items-center gap-2">
+        <span className="text-amber-400 text-xs font-bold tracking-widest">P&L</span>
+        <span className="text-gray-700 text-xs">│</span>
+        {tabs.map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`text-xs px-2 py-0.5 border ${
+              tab === key
+                ? 'border-amber-500 text-amber-300 bg-amber-900/30'
+                : 'border-gray-800 text-gray-600 hover:border-amber-800 hover:text-amber-600'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="p-3 grid grid-cols-3 gap-4">
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">UNREALIZED</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(unrealized)}`}>{fmt$(unrealized)}</div>
+          <div className="text-gray-500 text-xs">open positions</div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(realized)}`}>{fmt$(realized)}</div>
+          <div className="text-gray-500 text-xs">{realizedSub}</div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">NET</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(net)}`}>{fmt$(net)}</div>
+          <div className="text-gray-500 text-xs">{netSub}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PnlBreakdown({ markets, label }: { markets: MarketPnl[]; label: string }) {
   if (!markets.length) return <div className="text-gray-600 text-xs">No activity</div>;
   return (
@@ -492,30 +555,13 @@ export default function Dashboard() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
         <StatCard
           label="PORTFOLIO VALUE"
           value={fmt$(portfolio.totalValue)}
           sub={`positions ${fmt$(portfolio.positionsValue)} + cash ${fmt$(portfolio.onChainUsdc, 2)}`}
         />
-        <StatCard
-          label="UNREALIZED P&L"
-          value={fmt$(portfolio.unrealizedPnl)}
-          sub="open positions only"
-          valueClass={pnlColor(portfolio.unrealizedPnl)}
-        />
-        <StatCard
-          label="REALIZED P&L"
-          value={fmt$(portfolio.realizedPnl)}
-          sub="completed trades & redeems"
-          valueClass={pnlColor(portfolio.realizedPnl)}
-        />
-        <StatCard
-          label="NET P&L"
-          value={fmt$(portfolio.totalPnl)}
-          sub="incl. settled losses"
-          valueClass={pnlColor(portfolio.totalPnl)}
-        />
+        <PnlStatsPanel portfolio={portfolio} pnl={pnl} />
       </div>
 
       {/* Middle Row: PnL by Period + Category */}
