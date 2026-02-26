@@ -45,6 +45,8 @@ interface DashboardData {
   updatedAt: string;
   portfolio: {
     totalValue: number;
+    positionsValue: number;
+    cashBalance: number;
     unrealizedPnl: number;
     realizedPnl: number;
     totalPnl: number;
@@ -350,7 +352,7 @@ export default function Dashboard() {
         <StatCard
           label="PORTFOLIO VALUE"
           value={fmt$(portfolio.totalValue)}
-          sub={`${portfolio.openCount} open / ${portfolio.totalPositions} total`}
+          sub={`positions ${fmt$(portfolio.positionsValue)} + cash ${fmt$(portfolio.cashBalance)}`}
         />
         <StatCard
           label="TOTAL P&L (UNREAL.)"

@@ -69,7 +69,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsRaw] = await Promise.all([
+    const [positions, trades, rewardsRaw, valueData] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -78,6 +78,9 @@ export async function GET() {
       fetch(`https://polymarket.com/api/rewards/markets?maker=${WALLET}`, {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
+      fetch(`https://data-api.polymarket.com/value?user=${WALLET}`, {
+        next: { revalidate: 60 },
+      }).then(r => r.json()).then(d => Array.isArray(d) ? d[0] : d).catch(() => null),
     ]);
 
     // Categorize positions
@@ -87,7 +90,9 @@ export async function GET() {
     }));
 
     // Portfolio summary
-    const totalValue = categorized.reduce((s: number, p: any) => s + (p.currentValue || 0), 0);
+    const positionsValue = categorized.reduce((s: number, p: any) => s + (p.currentValue || 0), 0);
+    const totalValue = valueData?.value ?? positionsValue;
+    const cashBalance = totalValue - positionsValue;
     const totalUnrealized = categorized.reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
     const totalRealized = categorized.reduce((s: number, p: any) => s + (p.realizedPnl || 0), 0);
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
@@ -155,6 +160,8 @@ export async function GET() {
       updatedAt: new Date().toISOString(),
       portfolio: {
         totalValue,
+        positionsValue,
+        cashBalance,
         unrealizedPnl: totalUnrealized,
         realizedPnl: totalRealized,
         totalPnl: totalUnrealized + totalRealized,
