@@ -201,6 +201,7 @@ export async function GET() {
         ratePerDay: m.rewards_config?.[0]?.rate_per_day || 0,
         earningPct: m.earning_percentage,
         competitiveness: m.market_competitiveness,
+        category: autoCategorize(m.question),
       }));
 
     // Top rewards markets by rate (for reference even if not LP'd)
@@ -213,6 +214,7 @@ export async function GET() {
         ratePerDay: m.rewards_config?.[0]?.rate_per_day || 0,
         earningPct: m.earning_percentage,
         competitiveness: m.market_competitiveness,
+        category: autoCategorize(m.question),
       }));
 
     return NextResponse.json({

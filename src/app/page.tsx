@@ -38,6 +38,7 @@ interface RewardsMarket {
   ratePerDay: number;
   earningPct: number;
   competitiveness: number;
+  category: string;
 }
 
 interface Activity {
@@ -260,6 +261,80 @@ function PositionsTable({ positions }: { positions: Position[] }) {
         >
           {showAll ? '▲ SHOW LESS' : `▼ SHOW ALL ${sorted.length} POSITIONS`}
         </button>
+      )}
+    </div>
+  );
+}
+
+function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActive: boolean }) {
+  const [catFilter, setCatFilter] = useState<string>('ALL');
+
+  const categories = ['ALL', ...Array.from(new Set(markets.map(m => m.category))).sort()];
+  const filtered = catFilter === 'ALL' ? markets : markets.filter(m => m.category === catFilter);
+
+  return (
+    <div>
+      {/* Category filter bar */}
+      <div className="flex gap-2 mb-3 flex-wrap">
+        {categories.map(cat => (
+          <button
+            key={cat}
+            onClick={() => setCatFilter(cat)}
+            className={`text-xs px-2 py-0.5 border ${
+              catFilter === cat
+                ? 'border-amber-500 text-amber-300 bg-amber-900/30'
+                : 'border-gray-800 text-gray-600 hover:border-amber-800 hover:text-amber-600'
+            }`}
+          >
+            {cat}
+          </button>
+        ))}
+        <span className="ml-auto text-xs text-gray-600">{filtered.length} markets</span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-gray-600 text-xs">No markets in this category.</div>
+      ) : (
+        <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-x-4 text-xs">
+          <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">MARKET</div>
+          <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">CATEGORY</div>
+          <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">RATE/DAY</div>
+          <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">
+            {isActive ? 'EARNING %' : 'COMPETIT.'}
+          </div>
+          <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">
+            {isActive ? 'ACTIVE' : 'STATUS'}
+          </div>
+          {filtered.map((m, i) => (
+            <>
+              <div key={`t${i}`} className="text-gray-300 py-0.5 border-b border-gray-900 truncate" title={m.question}>
+                <a
+                  href={`https://polymarket.com/event/${m.event_slug}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-amber-300"
+                >
+                  {truncate(m.question, 50)}
+                </a>
+              </div>
+              <div key={`c${i}`} className="text-gray-500 py-0.5 border-b border-gray-900 truncate">
+                {m.category}
+              </div>
+              <div key={`r${i}`} className="text-green-400 py-0.5 border-b border-gray-900 font-mono">
+                ${m.ratePerDay.toFixed(2)}/day
+              </div>
+              <div key={`e${i}`} className={`py-0.5 border-b border-gray-900 font-mono ${m.earningPct > 0 ? 'text-green-400' : 'text-gray-600'}`}>
+                {isActive ? `${m.earningPct.toFixed(1)}%` : `${m.competitiveness.toFixed(0)}x`}
+              </div>
+              <div key={`s${i}`} className="py-0.5 border-b border-gray-900">
+                {isActive
+                  ? <span className="text-green-400">● EARNING</span>
+                  : <span className="text-amber-700">◌ AVAILABLE</span>
+                }
+              </div>
+            </>
+          ))}
+        </div>
       )}
     </div>
   );
@@ -612,46 +687,10 @@ export default function Dashboard() {
 
       {/* LP Rewards */}
       <Panel title={rewardsTitle} className="mb-3">
-        {rewardsDisplay.length === 0 ? (
-          <div className="text-gray-600 text-xs">No LP rewards data available.</div>
-        ) : (
-          <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-4 text-xs">
-            <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">MARKET</div>
-            <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">RATE/DAY</div>
-            <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">
-              {rewards.active.length > 0 ? 'EARNING %' : 'COMPETIT.'}
-            </div>
-            <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">
-              {rewards.active.length > 0 ? 'ACTIVE' : 'STATUS'}
-            </div>
-            {rewardsDisplay.map((m, i) => (
-              <>
-                <div key={`t${i}`} className="text-gray-300 py-0.5 border-b border-gray-900 truncate" title={m.question}>
-                  <a
-                    href={`https://polymarket.com/event/${m.event_slug}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="hover:text-amber-300"
-                  >
-                    {truncate(m.question, 55)}
-                  </a>
-                </div>
-                <div key={`r${i}`} className="text-green-400 py-0.5 border-b border-gray-900 font-mono">
-                  ${m.ratePerDay.toFixed(2)}/day
-                </div>
-                <div key={`e${i}`} className={`py-0.5 border-b border-gray-900 font-mono ${m.earningPct > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                  {rewards.active.length > 0 ? `${m.earningPct.toFixed(1)}%` : `${m.competitiveness.toFixed(0)}x`}
-                </div>
-                <div key={`s${i}`} className="py-0.5 border-b border-gray-900">
-                  {rewards.active.length > 0
-                    ? <span className="text-green-400">● EARNING</span>
-                    : <span className="text-amber-700">◌ AVAILABLE</span>
-                  }
-                </div>
-              </>
-            ))}
-          </div>
-        )}
+        {rewardsDisplay.length === 0
+          ? <div className="text-gray-600 text-xs">No LP rewards data available.</div>
+          : <RewardsPanel markets={rewardsDisplay} isActive={rewards.active.length > 0} />
+        }
       </Panel>
 
       {/* Positions Table */}
