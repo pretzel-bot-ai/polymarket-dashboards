@@ -358,10 +358,13 @@ function PnlStatsPanel({ portfolio, pnl }: {
   const periodFlow = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : null;
   const unrealized = portfolio.unrealizedPnl;
   const realized = periodFlow !== null ? periodFlow : portfolio.realizedPnl;
-  const net = periodFlow !== null ? periodFlow + unrealized : portfolio.totalPnl;
+  // For period tabs: NET = period realized only (adding all-time unrealized to a period
+  // realized number is a timeframe mismatch and produces a meaningless figure).
+  // For ALL tab: NET = all-time realized + current unrealized.
+  const net = periodFlow !== null ? periodFlow : portfolio.totalPnl;
 
   const realizedSub = tab === 'all' ? 'completed trades' : tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d';
-  const netSub = tab === 'all' ? 'incl. settled losses' : 'flow + unrealized';
+  const netSub = tab === 'all' ? 'realized + unrealized' : 'period realized only';
 
   return (
     <div className="md:col-span-3 border border-amber-800">
@@ -394,7 +397,7 @@ function PnlStatsPanel({ portfolio, pnl }: {
           <div className="text-gray-500 text-xs">{realizedSub}</div>
         </div>
         <div className="flex flex-col gap-1">
-          <div className="text-amber-500 text-xs tracking-widest">NET</div>
+          <div className="text-amber-500 text-xs tracking-widest">{tab === 'all' ? 'NET' : 'PERIOD P&L'}</div>
           <div className={`text-xl font-bold font-mono ${pnlColor(net)}`}>{fmt$(net)}</div>
           <div className="text-gray-500 text-xs">{netSub}</div>
         </div>
@@ -642,7 +645,7 @@ export default function Dashboard() {
       {/* Middle Row: PnL by Period + Category */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         {/* PnL Overview */}
-        <Panel title="REALIZED CASH FLOW (TRADES + REDEEMS + REWARDS)">
+        <Panel title="REALIZED P&L (COST-BASIS — SELLS + REDEEMS + REWARDS)">
           <div className="flex gap-2 mb-3">
             {(['day', 'week', 'month'] as const).map(tab => (
               <button

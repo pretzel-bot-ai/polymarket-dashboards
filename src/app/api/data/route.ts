@@ -136,17 +136,15 @@ export async function GET() {
     const totalValue = positionsValue + onChainUsdc;
     const cashBalance = onChainUsdc;
 
-    // unrealized = mark-to-market on open positions (cashPnl where currentValue > 0)
-    // realized   = sum of realizedPnl from the positions API (completed trade gains)
-    // total      = sum(cashPnl + realizedPnl) for ALL positions — this captures settled
-    //              losses implicitly via cashPnl going to -initialValue on resolution
+    // unrealized = sum of cashPnl across ALL positions (mark-to-market, incl. settled losses
+    //              not yet redeemed). Consistent with categoryPnl and totalPnl.
+    // realized   = sum of realizedPnl from the positions API (gains from completed sells)
+    // total      = unrealized + realized
     const totalUnrealized = categorized
-      .filter((p: any) => (p.currentValue || 0) > 0)
       .reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
     const totalRealized = categorized
       .reduce((s: number, p: any) => s + (p.realizedPnl || 0), 0);
-    const totalPnl = categorized
-      .reduce((s: number, p: any) => s + (p.cashPnl || 0) + (p.realizedPnl || 0), 0);
+    const totalPnl = totalUnrealized + totalRealized;
 
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
 
@@ -161,31 +159,100 @@ export async function GET() {
       .map(([cat, v]) => ({ category: cat, unrealized: v.unrealized, realized: v.realized, total: v.unrealized + v.realized }))
       .sort((a, b) => b.total - a.total);
 
-    // Time-based realized flow: REDEEM proceeds + SELL proceeds - BUY costs.
-    // REDEEM = settled winning positions cashed out.
-    // This is actual USDC received/spent, not unrealized P&L on open positions.
-    function realizedFlow(cutoff: number) {
-      return activity
-        .filter((a: any) => a.timestamp >= cutoff)
-        .reduce((sum: number, a: any) => {
-          const usdc = a.usdcSize || 0;
-          if (a.type === 'REDEEM' || a.type === 'REWARD' || a.type === 'YIELD') return sum + usdc;
-          if (a.type === 'TRADE') return sum + (a.side === 'SELL' ? usdc : -usdc);
-          return sum;
-        }, 0);
+    // === Cost-basis reconstruction from trade history ===
+    // Replay all trades chronologically to compute the running avgCost per conditionId
+    // at the moment of each sell/redeem — avoids the bug of using the *current* positions
+    // API avgPrice, which changes with subsequent buys and is missing for closed positions.
+
+    // Build conditionId → title from activity (trades API may not always carry titles)
+    const conditionToTitle: Record<string, string> = {};
+    for (const a of activity) {
+      if (a.conditionId && a.title) conditionToTitle[a.conditionId] = a.title;
     }
 
-    // Top contributing markets per period (by net USDC flow)
+    interface CostState { size: number; totalCost: number; }
+    const costBasis: Record<string, CostState> = {};
+
+    // sellProfits: one entry per SELL trade with its profit and timestamp
+    const sellProfits: Array<{ timestamp: number; profit: number; title: string }> = [];
+
+    const sortedTrades = [...trades].sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
+    for (const t of sortedTrades) {
+      const cid = t.conditionId;
+      if (!cid) continue;
+      if (!costBasis[cid]) costBasis[cid] = { size: 0, totalCost: 0 };
+      const state = costBasis[cid];
+      const size = Math.abs(t.size || 0);
+      const price = t.price || 0;
+
+      if (t.side === 'BUY') {
+        state.totalCost += size * price;
+        state.size += size;
+      } else if (t.side === 'SELL') {
+        const avgCost = state.size > 0 ? state.totalCost / state.size : 0;
+        const profit = size * (price - avgCost);
+        const title = t.title || t.question || conditionToTitle[cid] || '?';
+        sellProfits.push({ timestamp: t.timestamp || 0, profit, title });
+        // Reduce cost proportionally — avgCost itself stays unchanged after a sell
+        state.totalCost = Math.max(0, state.totalCost - size * avgCost);
+        state.size = Math.max(0, state.size - size);
+      }
+    }
+
+    // finalAvgCost[conditionId]: avg cost per share for any remaining/redeemable shares
+    // Used to compute P&L on REDEEM activity events (no SELL trade is emitted for settlement)
+    const finalAvgCost: Record<string, number> = {};
+    for (const [cid, state] of Object.entries(costBasis)) {
+      finalAvgCost[cid] = state.size > 0 ? state.totalCost / state.size : 0;
+    }
+
+    // Period realized P&L = sell profits from trades in period
+    //                     + REDEEM/YIELD/REWARD from activity in period
+    function realizedFlow(cutoff: number): number {
+      const sellTotal = sellProfits
+        .filter(s => s.timestamp >= cutoff)
+        .reduce((sum, s) => sum + s.profit, 0);
+
+      const activityTotal = activity
+        .filter((a: any) => a.timestamp >= cutoff)
+        .reduce((sum: number, a: any) => {
+          if (a.type === 'REDEEM') {
+            const avgCost = finalAvgCost[a.conditionId] ?? 0;
+            return sum + (a.usdcSize || 0) - (a.size || 0) * avgCost;
+          }
+          if (a.type === 'YIELD' || a.type === 'REWARD') return sum + (a.usdcSize || 0);
+          return sum;
+        }, 0);
+
+      return sellTotal + activityTotal;
+    }
+
+    // Top contributing markets per period
     function topMarkets(cutoff: number, n = 5) {
       const map: Record<string, number> = {};
-      for (const a of activity.filter((a: any) => a.timestamp >= cutoff)) {
-        const usdc = a.usdcSize || 0;
-        const title = a.title || (a.type === 'REWARD' ? 'LP Reward' : a.type === 'YIELD' ? 'USDC Yield' : '?');
-        let flow = 0;
-        if (a.type === 'REDEEM' || a.type === 'REWARD' || a.type === 'YIELD') flow = usdc;
-        else if (a.type === 'TRADE') flow = a.side === 'SELL' ? usdc : -usdc;
-        if (flow !== 0) map[title] = (map[title] || 0) + flow;
+
+      for (const s of sellProfits.filter(s => s.timestamp >= cutoff)) {
+        if (s.profit === 0) continue;
+        map[s.title] = (map[s.title] || 0) + s.profit;
       }
+
+      for (const a of activity.filter((a: any) => a.timestamp >= cutoff)) {
+        let profit = 0;
+        let title = a.title || '?';
+        if (a.type === 'REDEEM') {
+          const avgCost = finalAvgCost[a.conditionId] ?? 0;
+          profit = (a.usdcSize || 0) - (a.size || 0) * avgCost;
+        } else if (a.type === 'YIELD') {
+          profit = a.usdcSize || 0;
+          title = 'USDC Yield';
+        } else if (a.type === 'REWARD') {
+          profit = a.usdcSize || 0;
+          title = 'LP Reward';
+        }
+        if (profit === 0) continue;
+        map[title] = (map[title] || 0) + profit;
+      }
+
       return Object.entries(map)
         .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))
         .slice(0, n)
