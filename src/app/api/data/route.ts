@@ -83,6 +83,20 @@ async function fetchOnChainUsdc(wallet: string): Promise<number> {
   return native + bridged;
 }
 
+async function fetchActiveMarkets(): Promise<any[]> {
+  try {
+    const res = await fetch(
+      'https://gamma-api.polymarket.com/markets?active=true&closed=false&order=volume&ascending=false&limit=100',
+      { next: { revalidate: 300 } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
 async function fetchActivity(): Promise<any[]> {
   const results: any[] = [];
   let offset = 0;
@@ -109,7 +123,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsRaw, valueData, activity, onChainUsdc] = await Promise.all([
+    const [positions, trades, rewardsRaw, valueData, activity, onChainUsdc, activeMarkets] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -123,6 +137,7 @@ export async function GET() {
       }).then(r => r.json()).then(d => Array.isArray(d) ? d[0] : d).catch(() => null),
       fetchActivity(),
       fetchOnChainUsdc(WALLET).catch(() => 0),
+      fetchActiveMarkets().catch(() => []),
     ]);
 
     // Categorize positions
@@ -274,6 +289,92 @@ export async function GET() {
     const allTimeRealized = realizedFlow(0);
     const allTimeNet      = allTimeRealized + allTimeUnrealized;
 
+    // === Suggested Markets: profile user's trading behaviour ===
+    // Build category distribution and keyword frequency from BUY events
+    const buyEvents = sortedActivity.filter((a: any) => a.type === 'TRADE' && a.side === 'BUY');
+    const totalBuyCount = buyEvents.length || 1;
+
+    const catBuyCount: Record<string, number> = {};
+    for (const a of buyEvents) {
+      const cat = autoCategorize(a.title || '');
+      catBuyCount[cat] = (catBuyCount[cat] || 0) + 1;
+    }
+
+    const stopWords = new Set(['the','a','an','is','in','on','at','to','for','of','and','or','by','be','will','with','from','as','it','this','that','was','are','has','have','had','do','did','not','no','can','get','its','may','who','how','what','when','which','than','up','if','after','before','during','their','they','he','she','we','you','your','his','her','our','about','over','into','then','more','also','been','would','could','should','just','its','vs','does']);
+    const kwCount: Record<string, number> = {};
+    for (const a of buyEvents) {
+      const words = (a.title || '').toLowerCase().split(/\W+/).filter((w: string) => w.length > 3 && !stopWords.has(w));
+      for (const w of words) {
+        kwCount[w] = (kwCount[w] || 0) + 1;
+      }
+    }
+    const topKeywords = Object.entries(kwCount)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 40)
+      .map(([w]) => w);
+
+    const buyPrices = buyEvents
+      .map((a: any) => a.price || 0)
+      .filter((p: number) => p > 0 && p < 1)
+      .sort((a: number, b: number) => a - b);
+    const avgBuyPrice = buyPrices.length > 0
+      ? buyPrices.reduce((s: number, p: number) => s + p, 0) / buyPrices.length
+      : 0.5;
+
+    // Exclude all conditionIds the user has ever interacted with
+    const tradedConditionIds = new Set(activity.map((a: any) => a.conditionId).filter(Boolean));
+
+    const suggestions = (activeMarkets as any[])
+      .filter((m: any) => m.conditionId && !tradedConditionIds.has(m.conditionId))
+      .map((m: any) => {
+        const title = m.question || '';
+        const category = autoCategorize(title);
+
+        // Category score: proportion of user's buys in this category
+        const catScore = Math.min((catBuyCount[category] || 0) / totalBuyCount * 3, 1);
+
+        // Keyword score: how many of user's top keywords appear in this title
+        const titleWords = new Set(title.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3));
+        const matchedKws = topKeywords.filter(kw => titleWords.has(kw));
+        const kwScore = Math.min(matchedKws.length / 3, 1);
+
+        // Price fit: is the YES price near user's average buy price?
+        let yesPrice = 0.5;
+        try {
+          const rawPrices = m.outcomePrices;
+          const prices = typeof rawPrices === 'string' ? JSON.parse(rawPrices) : (Array.isArray(rawPrices) ? rawPrices : []);
+          yesPrice = parseFloat(prices[0]) || 0.5;
+        } catch { /* keep 0.5 */ }
+        const priceScore = Math.max(0, 1 - Math.abs(yesPrice - avgBuyPrice) * 4);
+
+        // Volume score: prefer more liquid markets
+        const vol = typeof m.volume === 'string' ? parseFloat(m.volume) || 0 : (m.volume || 0);
+        const volScore = Math.min(vol / 1000000, 1);
+
+        const score = catScore * 0.40 + kwScore * 0.35 + volScore * 0.15 + priceScore * 0.10;
+
+        const reasons: string[] = [];
+        if (catBuyCount[category] > 0) {
+          reasons.push(`${category} (${((catBuyCount[category] / totalBuyCount) * 100).toFixed(0)}% of trades)`);
+        }
+        if (matchedKws.length > 0) {
+          reasons.push(`matches: ${matchedKws.slice(0, 3).join(', ')}`);
+        }
+
+        return {
+          title,
+          slug: m.slug || '',
+          eventSlug: m.eventSlug || m.event?.slug || m.slug || '',
+          category,
+          volume: vol,
+          yesPrice,
+          score,
+          reason: reasons.join(' · ') || category,
+        };
+      })
+      .sort((a: any, b: any) => b.score - a.score)
+      .slice(0, 20);
+
     // Rewards: user's active LP markets
     const activeRewards = (rewardsRaw as any[])
       .filter((m: any) => m.earning_percentage > 0)
@@ -328,6 +429,7 @@ export async function GET() {
         active: activeRewards,
         top: topRewards,
       },
+      suggestions,
       activity: activity.map((a: any) => ({
         timestamp: a.timestamp,
         type: a.type,

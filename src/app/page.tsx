@@ -55,6 +55,17 @@ interface Activity {
   transactionHash: string | null;
 }
 
+interface SuggestedMarket {
+  title: string;
+  slug: string;
+  eventSlug: string;
+  category: string;
+  volume: number;
+  yesPrice: number;
+  score: number;
+  reason: string;
+}
+
 interface DashboardData {
   wallet: string;
   updatedAt: string;
@@ -84,6 +95,7 @@ interface DashboardData {
     active: RewardsMarket[];
     top: RewardsMarket[];
   };
+  suggestions: SuggestedMarket[];
   activity: Activity[];
 }
 
@@ -552,6 +564,69 @@ function ActivityFeed({ activity }: { activity: Activity[] }) {
   );
 }
 
+function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const display = showAll ? suggestions : suggestions.slice(0, 10);
+
+  if (suggestions.length === 0) {
+    return <div className="text-gray-600 text-xs">No suggestions available.</div>;
+  }
+
+  return (
+    <div>
+      <div className="space-y-2">
+        {display.map((m, i) => {
+          const href = m.eventSlug
+            ? `https://polymarket.com/event/${m.eventSlug}`
+            : `https://polymarket.com/market/${m.slug}`;
+          return (
+            <div key={i} className="border-b border-gray-900 pb-2 hover:bg-amber-900/5 transition-colors">
+              <div className="flex items-start justify-between gap-2 mb-0.5">
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-gray-200 text-xs hover:text-amber-300 leading-tight flex-1"
+                  title={m.title}
+                >
+                  {truncate(m.title, 52)}
+                </a>
+                <div className="flex flex-col items-end shrink-0 gap-0.5">
+                  <span className="text-xs font-mono text-green-400">
+                    YES {(m.yesPrice * 100).toFixed(0)}¢
+                  </span>
+                  <span className="text-xs font-mono text-gray-700">
+                    {(m.score * 100).toFixed(0)}% match
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs flex-wrap">
+                <span className="text-amber-700">{m.category}</span>
+                <span className="text-gray-800">·</span>
+                <span className="text-gray-600">${fmtSize(m.volume)} vol</span>
+                {m.reason && (
+                  <>
+                    <span className="text-gray-800">·</span>
+                    <span className="text-gray-500 truncate">{m.reason}</span>
+                  </>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {suggestions.length > 10 && (
+        <button
+          onClick={() => setShowAll(v => !v)}
+          className="mt-2 text-xs text-amber-700 hover:text-amber-400"
+        >
+          {showAll ? '▲ SHOW LESS' : `▼ SHOW ALL ${suggestions.length}`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -602,7 +677,7 @@ export default function Dashboard() {
     );
   }
 
-  const { portfolio, pnl, categoryPnl, positions, rewards, activity } = data;
+  const { portfolio, pnl, categoryPnl, positions, rewards, suggestions, activity } = data;
   const maxCatAbs = Math.max(...categoryPnl.map(c => Math.abs(c.total)), 1);
 
   // LP rewards display
@@ -712,10 +787,15 @@ export default function Dashboard() {
         <PositionsTable positions={positions} />
       </Panel>
 
-      {/* Activity Feed */}
-      <Panel title={`ACCOUNT ACTIVITY (${data.activity.length} events)`} className="mb-3">
-        <ActivityFeed activity={data.activity} />
-      </Panel>
+      {/* Activity Feed + Suggested Markets */}
+      <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-3 mb-3">
+        <Panel title={`ACCOUNT ACTIVITY (${data.activity.length} events)`}>
+          <ActivityFeed activity={data.activity} />
+        </Panel>
+        <Panel title={`SUGGESTED MARKETS (${suggestions.length})`}>
+          <SuggestedMarketsPanel suggestions={suggestions} />
+        </Panel>
+      </div>
 
       {/* Footer */}
       <div className="mt-3 text-center text-gray-800 text-xs">
