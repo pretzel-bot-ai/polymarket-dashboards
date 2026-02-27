@@ -564,6 +564,136 @@ function ActivityFeed({ activity }: { activity: Activity[] }) {
   );
 }
 
+function MarketLookupPanel() {
+  const [url, setUrl] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function lookup() {
+    const trimmed = url.trim();
+    if (!trimmed) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch(`/api/market?url=${encodeURIComponent(trimmed)}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setResult(data);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function fmtDateStr(s: string | null): string {
+    if (!s) return '—';
+    try {
+      return new Date(s).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch { return s; }
+  }
+
+  function getYesPrice(outcomePrices: any): number {
+    try {
+      const prices = typeof outcomePrices === 'string' ? JSON.parse(outcomePrices) : (outcomePrices || []);
+      return parseFloat(prices[0]) || 0.5;
+    } catch { return 0.5; }
+  }
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-3">
+        <input
+          type="text"
+          value={url}
+          onChange={e => setUrl(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && lookup()}
+          placeholder="https://polymarket.com/event/..."
+          className="flex-1 bg-black border border-amber-900 text-gray-300 text-xs px-2 py-1.5 font-mono placeholder-gray-700 focus:outline-none focus:border-amber-600"
+        />
+        <button
+          onClick={lookup}
+          disabled={loading || !url.trim()}
+          className="text-xs px-3 py-1.5 border border-amber-700 text-amber-400 hover:bg-amber-900/30 disabled:opacity-40 transition-colors"
+        >
+          {loading ? '…' : 'LOOK UP'}
+        </button>
+      </div>
+
+      {error && <div className="text-red-400 text-xs">{error}</div>}
+
+      {result && (
+        <div>
+          <div className="text-gray-200 text-sm font-bold mb-3 leading-tight">{result.title}</div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            <div className="border border-amber-900 p-2">
+              <div className="text-amber-600 text-xs tracking-widest mb-1">CREATED</div>
+              <div className="text-white text-sm font-mono">{fmtDateStr(result.startDate)}</div>
+            </div>
+            <div className="border border-amber-900 p-2">
+              <div className="text-amber-600 text-xs tracking-widest mb-1">ENDS</div>
+              <div className="text-white text-sm font-mono">{fmtDateStr(result.endDate)}</div>
+            </div>
+            <div className="border border-amber-900 p-2">
+              <div className="text-amber-600 text-xs tracking-widest mb-1">24H VOLUME</div>
+              <div className="text-white text-sm font-mono font-bold">${fmtSize(result.volume24h)}</div>
+            </div>
+            <div className="border border-amber-900 p-2">
+              <div className="text-amber-600 text-xs tracking-widest mb-1">ALL-TIME VOL</div>
+              <div className="text-white text-sm font-mono font-bold">${fmtSize(result.volume)}</div>
+            </div>
+          </div>
+
+          {result.markets.length === 1 ? (
+            <div className="flex gap-6 text-xs border-t border-gray-900 pt-2">
+              <div>
+                <span className="text-amber-600 mr-1">YES</span>
+                <span className="text-green-400 font-mono">{(getYesPrice(result.markets[0].outcomePrices) * 100).toFixed(1)}¢</span>
+              </div>
+              <div>
+                <span className="text-amber-600 mr-1">NO</span>
+                <span className="text-red-400 font-mono">{((1 - getYesPrice(result.markets[0].outcomePrices)) * 100).toFixed(1)}¢</span>
+              </div>
+              <div>
+                <span className="text-amber-600 mr-1">LIQUIDITY</span>
+                <span className="text-gray-300 font-mono">${fmtSize(result.liquidity)}</span>
+              </div>
+              <div>
+                <span className={result.markets[0].active ? 'text-green-500' : result.markets[0].closed ? 'text-gray-600' : 'text-amber-600'}>
+                  {result.markets[0].closed ? '● CLOSED' : result.markets[0].active ? '● ACTIVE' : '○ INACTIVE'}
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="text-amber-600 text-xs tracking-widest mb-1 border-t border-gray-900 pt-2">
+                {result.markets.length} MARKETS IN EVENT
+              </div>
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs text-amber-700 tracking-widest pb-1 border-b border-amber-900">
+                <div>QUESTION</div><div>YES</div><div>24H VOL</div><div>ALL-TIME</div>
+              </div>
+              {result.markets.map((m: any, i: number) => {
+                const yp = getYesPrice(m.outcomePrices);
+                return (
+                  <div key={i} className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5 border-b border-gray-900">
+                    <div className="text-gray-300 truncate" title={m.question}>{truncate(m.question, 48)}</div>
+                    <div className="text-green-400 font-mono">{(yp * 100).toFixed(0)}¢</div>
+                    <div className="text-gray-400 font-mono">${fmtSize(m.volume24h)}</div>
+                    <div className="text-gray-400 font-mono">${fmtSize(m.volume)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[] }) {
   const [showAll, setShowAll] = useState(false);
   const display = showAll ? suggestions : suggestions.slice(0, 10);
@@ -785,6 +915,11 @@ export default function Dashboard() {
       {/* Positions Table */}
       <Panel title={`OPEN POSITIONS (${portfolio.openCount} active / ${portfolio.totalPositions} total)`} className="mb-3">
         <PositionsTable positions={positions} />
+      </Panel>
+
+      {/* Market Lookup */}
+      <Panel title="MARKET LOOKUP" className="mb-3">
+        <MarketLookupPanel />
       </Panel>
 
       {/* Activity Feed + Suggested Markets */}
