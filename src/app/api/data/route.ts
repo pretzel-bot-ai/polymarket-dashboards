@@ -463,8 +463,9 @@ export async function GET() {
         category: autoCategorize(m.question),
       }));
 
-    // All reward markets (unfiltered), sorted by rate desc, with earning% merged in
+    // Crypto-only reward markets, sorted by rate desc, with earning% merged in
     const topRewards = (rewardsAll as any[])
+      .filter((m: any) => autoCategorize(m.question) === 'Crypto')
       .sort((a: any, b: any) => (b.rewards_config?.[0]?.rate_per_day || 0) - (a.rewards_config?.[0]?.rate_per_day || 0))
       .map((m: any) => ({
         question: m.question,

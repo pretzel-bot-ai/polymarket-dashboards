@@ -282,37 +282,15 @@ function PositionsTable({ positions }: { positions: Position[] }) {
 const PAGE_SIZE = 10;
 
 function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActive: boolean }) {
-  const [catFilter, setCatFilter] = useState<string>('ALL');
   const [page, setPage] = useState(0);
 
-  const categories = ['ALL', ...Array.from(new Set(markets.map(m => m.category))).sort()];
-  const filtered = catFilter === 'ALL' ? markets : markets.filter(m => m.category === catFilter);
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
-  const pageMarkets = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
-
-  function handleCatFilter(cat: string) {
-    setCatFilter(cat);
-    setPage(0);
-  }
+  const totalPages = Math.ceil(markets.length / PAGE_SIZE);
+  const pageMarkets = markets.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 
   return (
     <div>
-      {/* Category filter bar */}
-      <div className="flex gap-2 mb-3 flex-wrap">
-        {categories.map(cat => (
-          <button
-            key={cat}
-            onClick={() => handleCatFilter(cat)}
-            className={`text-xs px-2 py-0.5 border ${
-              catFilter === cat
-                ? 'border-amber-500 text-amber-300 bg-amber-900/30'
-                : 'border-gray-800 text-gray-600 hover:border-amber-800 hover:text-amber-600'
-            }`}
-          >
-            {cat}
-          </button>
-        ))}
-        <span className="ml-auto text-xs text-gray-600">{filtered.length} markets</span>
+      <div className="flex justify-end mb-2">
+        <span className="text-xs text-gray-600">{markets.length} markets</span>
       </div>
 
       {filtered.length === 0 ? (
@@ -372,7 +350,7 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
               ← PREV
             </button>
             <span className="text-gray-600 font-mono">
-              {page + 1} / {totalPages}  ({filtered.length} total)
+              {page + 1} / {totalPages}  ({markets.length} total)
             </span>
             <button
               onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
@@ -850,7 +828,7 @@ export default function Dashboard() {
   const rewardsDisplay = rewards.active.length > 0 ? rewards.active : rewards.top;
   const rewardsTitle = rewards.active.length > 0
     ? `ACTIVE LP POSITIONS (${rewards.active.length})`
-    : 'TOP LP REWARD MARKETS';
+    : `CRYPTO LP REWARD MARKETS (${rewards.top.length})`;
 
   const tabPnl = { day: pnl.day.total, week: pnl.week.total, month: pnl.month.total }[activeTab];
   const tabMarkets = { day: pnl.dayMarkets, week: pnl.weekMarkets, month: pnl.monthMarkets }[activeTab];
