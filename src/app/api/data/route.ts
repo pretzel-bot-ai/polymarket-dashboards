@@ -225,11 +225,25 @@ export async function GET() {
       state.size      = Math.max(0, state.size      - size);
     }
 
+    // Phase 4: book zero-resolution losses.
+    // Any remaining cost for a conditionId that no longer appears in the positions API
+    // means the market settled against the user (resolved to $0, no REDEEM issued).
+    // These are genuinely realised losses — reclassify them out of unrealised.
+    const positionConditionIds = new Set(
+      (Array.isArray(positions) ? positions : []).map((p: any) => p.conditionId).filter(Boolean)
+    );
+    let zeroResolutionLoss = 0;
+    for (const [cid, state] of Object.entries(costBasis)) {
+      if (!positionConditionIds.has(cid) && state.totalCost > 0.01) {
+        zeroResolutionLoss -= state.totalCost; // negative: these are losses
+        state.totalCost = 0;
+        state.size = 0;
+      }
+    }
+
     // All-time totals derived from full activity reconstruction.
-    // These are more accurate than the positions API, which only returns current positions
-    // and loses realizedPnl from fully-closed historical positions.
     const remainingCost = Object.values(costBasis).reduce((s, st) => s + st.totalCost, 0);
-    const allTimeUnrealized = positionsValue - remainingCost; // open mark-to-market vs cost
+    const allTimeUnrealized = positionsValue - remainingCost; // open mark-to-market vs cost only
 
     // Period P&L broken down by component
     function flowBreakdown(cutoff: number): { sells: number; redeems: number; misc: number } {
@@ -286,7 +300,7 @@ export async function GET() {
         .map(([title, pnl]) => ({ title, pnl }));
     }
 
-    const allTimeRealized = realizedFlow(0);
+    const allTimeRealized = realizedFlow(0) + zeroResolutionLoss;
     const allTimeNet      = allTimeRealized + allTimeUnrealized;
 
     // === Suggested Markets: profile user's trading behaviour ===
