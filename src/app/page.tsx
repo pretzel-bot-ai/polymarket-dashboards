@@ -293,8 +293,8 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
         <span className="text-xs text-gray-600">{markets.length} markets</span>
       </div>
 
-      {filtered.length === 0 ? (
-        <div className="text-gray-600 text-xs">No markets in this category.</div>
+      {markets.length === 0 ? (
+        <div className="text-gray-600 text-xs">No Crypto reward markets available.</div>
       ) : (
         <>
         <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-x-4 text-xs">
