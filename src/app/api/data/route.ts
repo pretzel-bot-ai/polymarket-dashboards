@@ -317,6 +317,7 @@ export async function GET() {
         day:   { ...flowBreakdown(cutoff1d),  total: realizedFlow(cutoff1d)  },
         week:  { ...flowBreakdown(cutoff7d),  total: realizedFlow(cutoff7d)  },
         month: { ...flowBreakdown(cutoff30d), total: realizedFlow(cutoff30d) },
+        all:   { ...flowBreakdown(0),         total: allTimeNet              },
         dayMarkets: topMarkets(cutoff1d),
         weekMarkets: topMarkets(cutoff7d),
         monthMarkets: topMarkets(cutoff30d),

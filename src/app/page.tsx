@@ -73,6 +73,7 @@ interface DashboardData {
     day:   { sells: number; redeems: number; misc: number; total: number };
     week:  { sells: number; redeems: number; misc: number; total: number };
     month: { sells: number; redeems: number; misc: number; total: number };
+    all:   { sells: number; redeems: number; misc: number; total: number };
     dayMarkets: MarketPnl[];
     weekMarkets: MarketPnl[];
     monthMarkets: MarketPnl[];
@@ -355,7 +356,10 @@ function PnlStatsPanel({ portfolio, pnl }: {
     { key: 'all', label: 'ALL' },
   ];
 
-  const period = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : null;
+  const period = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : pnl.all;
+  const isAll  = tab === 'all';
+  const totalLabel = isAll ? 'NET' : 'REALIZED';
+  const totalSub   = isAll ? 'realized + unrealized' : tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d';
 
   return (
     <div className="md:col-span-3 border border-amber-800">
@@ -377,50 +381,28 @@ function PnlStatsPanel({ portfolio, pnl }: {
         ))}
       </div>
 
-      {period !== null ? (
-        /* Period tabs: SELLS | REDEEMS | YLD+RWD | TOTAL */
-        <div className="p-3 grid grid-cols-4 gap-3">
-          <div className="flex flex-col gap-1">
-            <div className="text-amber-500 text-xs tracking-widest">SELLS</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(period.sells)}`}>{fmt$(period.sells)}</div>
-            <div className="text-gray-500 text-xs">exits vs avg cost</div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <div className="text-amber-500 text-xs tracking-widest">REDEEMS</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(period.redeems)}`}>{fmt$(period.redeems)}</div>
-            <div className="text-gray-500 text-xs">settled markets</div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <div className="text-amber-500 text-xs tracking-widest">YLD + RWD</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(period.misc)}`}>{fmt$(period.misc)}</div>
-            <div className="text-gray-500 text-xs">yield + LP rewards</div>
-          </div>
-          <div className="flex flex-col gap-1 border-l border-amber-900 pl-3">
-            <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(period.total)}`}>{fmt$(period.total)}</div>
-            <div className="text-gray-500 text-xs">{tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d'}</div>
-          </div>
+      <div className="p-3 grid grid-cols-4 gap-3">
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">SELLS</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(period.sells)}`}>{fmt$(period.sells)}</div>
+          <div className="text-gray-500 text-xs">exits vs avg cost</div>
         </div>
-      ) : (
-        /* ALL tab: REALIZED | UNREALIZED | NET */
-        <div className="p-3 grid grid-cols-3 gap-4">
-          <div className="flex flex-col gap-1">
-            <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.realizedPnl)}`}>{fmt$(portfolio.realizedPnl)}</div>
-            <div className="text-gray-500 text-xs">all closed trades</div>
-          </div>
-          <div className="flex flex-col gap-1">
-            <div className="text-amber-500 text-xs tracking-widest">UNREALIZED</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.unrealizedPnl)}`}>{fmt$(portfolio.unrealizedPnl)}</div>
-            <div className="text-gray-500 text-xs">open vs cost basis</div>
-          </div>
-          <div className="flex flex-col gap-1 border-l border-amber-900 pl-3">
-            <div className="text-amber-500 text-xs tracking-widest">NET</div>
-            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.totalPnl)}`}>{fmt$(portfolio.totalPnl)}</div>
-            <div className="text-gray-500 text-xs">realized + unrealized</div>
-          </div>
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">REDEEMS</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(period.redeems)}`}>{fmt$(period.redeems)}</div>
+          <div className="text-gray-500 text-xs">settled markets</div>
         </div>
-      )}
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">YLD + RWD</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(period.misc)}`}>{fmt$(period.misc)}</div>
+          <div className="text-gray-500 text-xs">yield + LP rewards</div>
+        </div>
+        <div className="flex flex-col gap-1 border-l border-amber-900 pl-3">
+          <div className="text-amber-500 text-xs tracking-widest">{totalLabel}</div>
+          <div className={`text-xl font-bold font-mono ${pnlColor(period.total)}`}>{fmt$(period.total)}</div>
+          <div className="text-gray-500 text-xs">{totalSub}</div>
+        </div>
+      </div>
     </div>
   );
 }
