@@ -279,11 +279,21 @@ function PositionsTable({ positions }: { positions: Position[] }) {
   );
 }
 
+const PAGE_SIZE = 10;
+
 function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActive: boolean }) {
   const [catFilter, setCatFilter] = useState<string>('ALL');
+  const [page, setPage] = useState(0);
 
   const categories = ['ALL', ...Array.from(new Set(markets.map(m => m.category))).sort()];
   const filtered = catFilter === 'ALL' ? markets : markets.filter(m => m.category === catFilter);
+  const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+  const pageMarkets = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  function handleCatFilter(cat: string) {
+    setCatFilter(cat);
+    setPage(0);
+  }
 
   return (
     <div>
@@ -292,7 +302,7 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
         {categories.map(cat => (
           <button
             key={cat}
-            onClick={() => setCatFilter(cat)}
+            onClick={() => handleCatFilter(cat)}
             className={`text-xs px-2 py-0.5 border ${
               catFilter === cat
                 ? 'border-amber-500 text-amber-300 bg-amber-900/30'
@@ -308,6 +318,7 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
       {filtered.length === 0 ? (
         <div className="text-gray-600 text-xs">No markets in this category.</div>
       ) : (
+        <>
         <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr] gap-x-4 text-xs">
           <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">MARKET</div>
           <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">CATEGORY</div>
@@ -318,7 +329,7 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
           <div className="text-amber-600 tracking-widest pb-1 border-b border-amber-900">
             {isActive ? 'ACTIVE' : 'STATUS'}
           </div>
-          {filtered.map((m, i) => (
+          {pageMarkets.map((m, i) => (
             <>
               <div key={`t${i}`} className="text-gray-300 py-0.5 border-b border-gray-900 truncate" title={m.question}>
                 <a
@@ -337,17 +348,42 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
                 ${m.ratePerDay.toFixed(2)}/day
               </div>
               <div key={`e${i}`} className={`py-0.5 border-b border-gray-900 font-mono ${m.earningPct > 0 ? 'text-green-400' : 'text-gray-600'}`}>
-                {isActive ? `${m.earningPct.toFixed(1)}%` : `${m.competitiveness.toFixed(0)}x`}
+                {isActive ? `${m.earningPct.toFixed(1)}%` : `${m.competitiveness?.toFixed(0) ?? '—'}x`}
               </div>
               <div key={`s${i}`} className="py-0.5 border-b border-gray-900">
                 {isActive
                   ? <span className="text-green-400">● EARNING</span>
-                  : <span className="text-amber-700">◌ AVAILABLE</span>
+                  : <span className={m.earningPct > 0 ? 'text-green-400' : 'text-amber-700'}>
+                      {m.earningPct > 0 ? '● EARNING' : '◌ AVAILABLE'}
+                    </span>
                 }
               </div>
             </>
           ))}
         </div>
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center gap-3 mt-3 text-xs">
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="px-2 py-0.5 border border-gray-800 text-gray-500 hover:border-amber-700 hover:text-amber-400 disabled:opacity-30"
+            >
+              ← PREV
+            </button>
+            <span className="text-gray-600 font-mono">
+              {page + 1} / {totalPages}  ({filtered.length} total)
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              className="px-2 py-0.5 border border-gray-800 text-gray-500 hover:border-amber-700 hover:text-amber-400 disabled:opacity-30"
+            >
+              NEXT →
+            </button>
+          </div>
+        )}
+        </>
       )}
     </div>
   );

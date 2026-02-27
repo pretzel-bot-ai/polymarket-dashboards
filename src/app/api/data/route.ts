@@ -172,13 +172,18 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsRaw, valueData, activity, onChainUsdc, activeMarkets] = await Promise.all([
+    const [positions, trades, rewardsEarning, rewardsAll, valueData, activity, onChainUsdc, activeMarkets] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
       ).then(r => r.json()),
       fetchAllTrades(),
-      fetch(`https://polymarket.com/api/rewards/markets?maker=${WALLET}`, {
+      // With maker filter → earning_percentage per market for this wallet
+      fetch(`https://polymarket.com/api/rewards/markets?maker=${WALLET}&limit=100`, {
+        next: { revalidate: 300 },
+      }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
+      // Without maker filter → unfiltered top-100 reward markets sorted by rate
+      fetch(`https://polymarket.com/api/rewards/markets?limit=100`, {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
       fetch(`https://data-api.polymarket.com/value?user=${WALLET}`, {
@@ -438,8 +443,16 @@ export async function GET() {
       .sort((a: any, b: any) => b.score - a.score)
       .slice(0, 20);
 
-    // Rewards: user's active LP markets
-    const activeRewards = (rewardsRaw as any[])
+    // Build a map of condition_id → earning_percentage from the maker-filtered fetch
+    const earningMap: Record<string, number> = {};
+    for (const m of rewardsEarning as any[]) {
+      if (m.condition_id && m.earning_percentage > 0) {
+        earningMap[m.condition_id] = m.earning_percentage;
+      }
+    }
+
+    // Active LP markets: those where user is currently earning
+    const activeRewards = (rewardsEarning as any[])
       .filter((m: any) => m.earning_percentage > 0)
       .map((m: any) => ({
         question: m.question,
@@ -450,15 +463,14 @@ export async function GET() {
         category: autoCategorize(m.question),
       }));
 
-    // Top rewards markets by rate (for reference even if not LP'd)
-    const topRewards = (rewardsRaw as any[])
+    // All reward markets (unfiltered), sorted by rate desc, with earning% merged in
+    const topRewards = (rewardsAll as any[])
       .sort((a: any, b: any) => (b.rewards_config?.[0]?.rate_per_day || 0) - (a.rewards_config?.[0]?.rate_per_day || 0))
-      .slice(0, 8)
       .map((m: any) => ({
         question: m.question,
         event_slug: m.event_slug,
         ratePerDay: m.rewards_config?.[0]?.rate_per_day || 0,
-        earningPct: m.earning_percentage,
+        earningPct: earningMap[m.condition_id] ?? 0,
         competitiveness: m.market_competitiveness,
         category: autoCategorize(m.question),
       }));
