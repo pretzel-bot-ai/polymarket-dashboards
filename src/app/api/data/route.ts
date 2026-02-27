@@ -4,42 +4,91 @@ const WALLET = '0xe005901e5c811e58d2d6e7338e109bd4ec1414fd';
 
 function autoCategorize(title: string): string {
   const t = title.toLowerCase();
+
+  // Middle East (check before Politics — more specific)
   if (
-    t.includes('openai') || t.includes('claude') || t.includes('deepseek') ||
-    t.includes('gpt') || t.includes('anthropic') || t.includes('llm') ||
-    (t.includes('ai') && (t.includes('model') || t.includes('best') || t.includes('tool')))
-  ) return 'AI & Tech';
-  if (
-    t.includes('google') || t.includes('microsoft') || t.includes('apple') ||
-    t.includes('amazon') || t.includes('meta') || t.includes('nvidia') ||
-    t.includes('tesla') || t.includes('spacex')
-  ) return 'Tech';
-  if (
-    t.includes('bitcoin') || t.includes('btc') || t.includes(' eth ') ||
-    t.includes('ethereum') || t.includes('crypto') || t.includes('solana') ||
-    t.includes(' sol ') || t.includes('token') || t.includes('blockchain') ||
-    t.includes('defi') || t.includes('nft') || t.includes('coinbase') ||
-    t.includes('robinhood') || t.includes('insider trading')
-  ) return 'Crypto & Finance';
+    t.includes('israel') || t.includes('gaza') || t.includes('hamas') ||
+    t.includes('hezbollah') || t.includes('lebanon') || t.includes('houthi') ||
+    t.includes('west bank') || t.includes('iran') || t.includes('saudi') ||
+    t.includes('yemen') || t.includes('syria') || t.includes('iraq') ||
+    t.includes('middle east') || t.includes('netanyahu') || t.includes('idf')
+  ) return 'Middle East';
+
+  // Politics
   if (
     t.includes('election') || t.includes('president') || t.includes('nomination') ||
     t.includes('democratic') || t.includes('republican') || t.includes('congress') ||
     t.includes('senate') || t.includes('trump') || t.includes('biden') ||
-    t.includes('harris') || t.includes('vote') || t.includes('party') ||
-    t.includes('cuban') || t.includes('governor') || t.includes('mayor')
+    t.includes('harris') || t.includes('vance') || t.includes('vote') ||
+    t.includes('governor') || t.includes('mayor') || t.includes('prime minister') ||
+    t.includes('parliament') || t.includes('macron') || t.includes('starmer') ||
+    t.includes('xi jinping') || t.includes('putin') || t.includes('zelensky') ||
+    t.includes('ukraine') || t.includes('russia') || t.includes('nato') ||
+    t.includes('tariff') || t.includes('sanction') || t.includes('deport') ||
+    t.includes('ceasefire') || t.includes('newsom') || t.includes('midterm') ||
+    t.includes('buttigieg') || t.includes('paxton') || t.includes('cornyn') ||
+    t.includes('orbán') || t.includes('orban') || t.includes('taiwan') ||
+    t.includes('china') || t.includes('epstein')
   ) return 'Politics';
+
+  // Sports
   if (
-    t.includes('nba') || t.includes('nfl') || t.includes('mlb') ||
-    t.includes('soccer') || t.includes('football') || t.includes('championship') ||
-    t.includes('super bowl') || t.includes('playoff') || t.includes('nhl') ||
-    t.includes('tennis') || t.includes('golf') || t.includes('ufc') ||
-    t.includes('boxing') || t.includes('olympic')
+    t.includes('nba') || t.includes('nfl') || t.includes('mlb') || t.includes('nhl') ||
+    t.includes('soccer') || t.includes('football') || t.includes('basketball') ||
+    t.includes('super bowl') || t.includes('playoff') || t.includes('championship') ||
+    t.includes('premier league') || t.includes('champions league') || t.includes(' epl') ||
+    t.includes('world cup') || t.includes('tennis') || t.includes('golf') ||
+    t.includes('ufc') || t.includes('boxing') || t.includes('olympic') ||
+    t.includes('formula 1') || t.includes('f1 ') || t.includes(' vs.') ||
+    t.includes('win the') || t.includes('win their') ||
+    (t.includes(' league') && !t.includes('ivy league'))
   ) return 'Sports';
+
+  // Crypto
   if (
-    t.includes('fed ') || t.includes('federal reserve') || t.includes('rate cut') ||
-    t.includes('recession') || t.includes('inflation') || t.includes('etf') ||
-    t.includes('gdp') || t.includes('ipo') || t.includes('tariff')
-  ) return 'Macro & Finance';
+    t.includes('bitcoin') || t.includes('btc') || t.includes('ethereum') ||
+    t.includes(' eth ') || t.includes('crypto') || t.includes('solana') ||
+    t.includes(' sol ') || t.includes('blockchain') || t.includes('defi') ||
+    t.includes('nft') || t.includes('coinbase') || t.includes('airdrop') ||
+    t.includes('memecoin') || t.includes('web3') || t.includes('token') ||
+    t.includes('pump.fun') || t.includes('hyperliquid') || t.includes('stablecoin') ||
+    t.includes('altcoin') || t.includes('robinhood') || t.includes('insider trading') ||
+    t.includes('dex') || t.includes('fdv') || t.includes('market cap') && t.includes('launch')
+  ) return 'Crypto';
+
+  // Pop Culture
+  if (
+    t.includes('oscar') || t.includes('grammy') || t.includes('emmy') ||
+    t.includes('golden globe') || t.includes('taylor swift') || t.includes('beyoncé') ||
+    t.includes('celebrity') || t.includes('movie') || t.includes('film') ||
+    t.includes('album') || t.includes('song of the year') || t.includes('best picture') ||
+    t.includes('netflix') || t.includes('spotify') || t.includes('box office') ||
+    t.includes('award') && (t.includes('music') || t.includes('film') || t.includes('tv'))
+  ) return 'Pop Culture';
+
+  // Science
+  if (
+    t.includes('openai') || t.includes('claude') || t.includes('deepseek') ||
+    t.includes('gpt') || t.includes('anthropic') || t.includes('llm') ||
+    t.includes('gemini') || t.includes('ai model') || t.includes('spacex') ||
+    t.includes('nasa') || t.includes('rocket') || t.includes('satellite') ||
+    t.includes('fda') || t.includes('vaccine') || t.includes('clinical trial') ||
+    t.includes('drug approval') || t.includes('cancer') || t.includes('nuclear') ||
+    (t.includes('ai') && (t.includes('model') || t.includes('benchmark') || t.includes('release')))
+  ) return 'Science';
+
+  // Business
+  if (
+    t.includes('google') || t.includes('microsoft') || t.includes('apple') ||
+    t.includes('amazon') || t.includes('meta') || t.includes('nvidia') ||
+    t.includes('tesla') || t.includes('ipo') || t.includes('merger') ||
+    t.includes('acquisition') || t.includes('earnings') || t.includes('fed ') ||
+    t.includes('federal reserve') || t.includes('rate cut') || t.includes('recession') ||
+    t.includes('inflation') || t.includes('etf') || t.includes('gdp') ||
+    t.includes('s&p') || t.includes('nasdaq') || t.includes('dow ') ||
+    t.includes('ceo') || t.includes('billion') || t.includes('stock price')
+  ) return 'Business';
+
   return 'Other';
 }
 
