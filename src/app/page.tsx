@@ -70,9 +70,9 @@ interface DashboardData {
     totalPositions: number;
   };
   pnl: {
-    day: number;
-    week: number;
-    month: number;
+    day:   { sells: number; redeems: number; misc: number; total: number };
+    week:  { sells: number; redeems: number; misc: number; total: number };
+    month: { sells: number; redeems: number; misc: number; total: number };
     dayMarkets: MarketPnl[];
     weekMarkets: MarketPnl[];
     monthMarkets: MarketPnl[];
@@ -355,16 +355,7 @@ function PnlStatsPanel({ portfolio, pnl }: {
     { key: 'all', label: 'ALL' },
   ];
 
-  const periodFlow = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : null;
-  const unrealized = portfolio.unrealizedPnl;
-  const realized = periodFlow !== null ? periodFlow : portfolio.realizedPnl;
-  // For period tabs: NET = period realized only (adding all-time unrealized to a period
-  // realized number is a timeframe mismatch and produces a meaningless figure).
-  // For ALL tab: NET = all-time realized + current unrealized.
-  const net = periodFlow !== null ? periodFlow : portfolio.totalPnl;
-
-  const realizedSub = tab === 'all' ? 'completed trades' : tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d';
-  const netSub = tab === 'all' ? 'realized + unrealized' : 'period realized only';
+  const period = tab === '1d' ? pnl.day : tab === '7d' ? pnl.week : tab === '30d' ? pnl.month : null;
 
   return (
     <div className="md:col-span-3 border border-amber-800">
@@ -385,23 +376,51 @@ function PnlStatsPanel({ portfolio, pnl }: {
           </button>
         ))}
       </div>
-      <div className="p-3 grid grid-cols-3 gap-4">
-        <div className="flex flex-col gap-1">
-          <div className="text-amber-500 text-xs tracking-widest">UNREALIZED</div>
-          <div className={`text-xl font-bold font-mono ${pnlColor(unrealized)}`}>{fmt$(unrealized)}</div>
-          <div className="text-gray-500 text-xs">open positions</div>
+
+      {period !== null ? (
+        /* Period tabs: SELLS | REDEEMS | YLD+RWD | TOTAL */
+        <div className="p-3 grid grid-cols-4 gap-3">
+          <div className="flex flex-col gap-1">
+            <div className="text-amber-500 text-xs tracking-widest">SELLS</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(period.sells)}`}>{fmt$(period.sells)}</div>
+            <div className="text-gray-500 text-xs">exits vs avg cost</div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="text-amber-500 text-xs tracking-widest">REDEEMS</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(period.redeems)}`}>{fmt$(period.redeems)}</div>
+            <div className="text-gray-500 text-xs">settled markets</div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="text-amber-500 text-xs tracking-widest">YLD + RWD</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(period.misc)}`}>{fmt$(period.misc)}</div>
+            <div className="text-gray-500 text-xs">yield + LP rewards</div>
+          </div>
+          <div className="flex flex-col gap-1 border-l border-amber-900 pl-3">
+            <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(period.total)}`}>{fmt$(period.total)}</div>
+            <div className="text-gray-500 text-xs">{tab === '1d' ? 'last 24h' : tab === '7d' ? 'last 7d' : 'last 30d'}</div>
+          </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
-          <div className={`text-xl font-bold font-mono ${pnlColor(realized)}`}>{fmt$(realized)}</div>
-          <div className="text-gray-500 text-xs">{realizedSub}</div>
+      ) : (
+        /* ALL tab: REALIZED | UNREALIZED | NET */
+        <div className="p-3 grid grid-cols-3 gap-4">
+          <div className="flex flex-col gap-1">
+            <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.realizedPnl)}`}>{fmt$(portfolio.realizedPnl)}</div>
+            <div className="text-gray-500 text-xs">all closed trades</div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <div className="text-amber-500 text-xs tracking-widest">UNREALIZED</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.unrealizedPnl)}`}>{fmt$(portfolio.unrealizedPnl)}</div>
+            <div className="text-gray-500 text-xs">open vs cost basis</div>
+          </div>
+          <div className="flex flex-col gap-1 border-l border-amber-900 pl-3">
+            <div className="text-amber-500 text-xs tracking-widest">NET</div>
+            <div className={`text-xl font-bold font-mono ${pnlColor(portfolio.totalPnl)}`}>{fmt$(portfolio.totalPnl)}</div>
+            <div className="text-gray-500 text-xs">realized + unrealized</div>
+          </div>
         </div>
-        <div className="flex flex-col gap-1">
-          <div className="text-amber-500 text-xs tracking-widest">{tab === 'all' ? 'NET' : 'PERIOD P&L'}</div>
-          <div className={`text-xl font-bold font-mono ${pnlColor(net)}`}>{fmt$(net)}</div>
-          <div className="text-gray-500 text-xs">{netSub}</div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -600,7 +619,7 @@ export default function Dashboard() {
     ? `ACTIVE LP POSITIONS (${rewards.active.length})`
     : 'TOP LP REWARD MARKETS';
 
-  const tabPnl = { day: pnl.day, week: pnl.week, month: pnl.month }[activeTab];
+  const tabPnl = { day: pnl.day.total, week: pnl.week.total, month: pnl.month.total }[activeTab];
   const tabMarkets = { day: pnl.dayMarkets, week: pnl.weekMarkets, month: pnl.monthMarkets }[activeTab];
 
   return (
@@ -669,15 +688,15 @@ export default function Dashboard() {
           <div className="mt-3 pt-2 border-t border-gray-900 grid grid-cols-3 gap-2 text-xs">
             <div>
               <div className="text-amber-600">1D</div>
-              <div className={`font-mono ${pnlColor(pnl.day)}`}>{fmt$(pnl.day)}</div>
+              <div className={`font-mono ${pnlColor(pnl.day.total)}`}>{fmt$(pnl.day.total)}</div>
             </div>
             <div>
               <div className="text-amber-600">7D</div>
-              <div className={`font-mono ${pnlColor(pnl.week)}`}>{fmt$(pnl.week)}</div>
+              <div className={`font-mono ${pnlColor(pnl.week.total)}`}>{fmt$(pnl.week.total)}</div>
             </div>
             <div>
               <div className="text-amber-600">30D</div>
-              <div className={`font-mono ${pnlColor(pnl.month)}`}>{fmt$(pnl.month)}</div>
+              <div className={`font-mono ${pnlColor(pnl.month.total)}`}>{fmt$(pnl.month.total)}</div>
             </div>
           </div>
         </Panel>

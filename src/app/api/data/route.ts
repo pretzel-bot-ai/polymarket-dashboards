@@ -216,24 +216,27 @@ export async function GET() {
     const remainingCost = Object.values(costBasis).reduce((s, st) => s + st.totalCost, 0);
     const allTimeUnrealized = positionsValue - remainingCost; // open mark-to-market vs cost
 
-    // Period realized P&L = sell profits in period + REDEEM/YIELD/REWARD in period
-    function realizedFlow(cutoff: number): number {
-      const sellTotal = sellProfits
+    // Period P&L broken down by component
+    function flowBreakdown(cutoff: number): { sells: number; redeems: number; misc: number } {
+      const sells = sellProfits
         .filter(s => s.timestamp >= cutoff)
         .reduce((sum, s) => sum + s.profit, 0);
+      let redeems = 0, misc = 0;
+      for (const a of sortedActivity) {
+        if ((a.timestamp || 0) < cutoff) continue;
+        if (a.type === 'REDEEM') {
+          const avgCost = finalAvgCost[a.conditionId] ?? 0;
+          redeems += (a.usdcSize || 0) - (a.size || 0) * avgCost;
+        } else if (a.type === 'YIELD' || a.type === 'REWARD') {
+          misc += a.usdcSize || 0;
+        }
+      }
+      return { sells, redeems, misc };
+    }
 
-      const activityTotal = sortedActivity
-        .filter((a: any) => a.timestamp >= cutoff)
-        .reduce((sum: number, a: any) => {
-          if (a.type === 'REDEEM') {
-            const avgCost = finalAvgCost[a.conditionId] ?? 0;
-            return sum + (a.usdcSize || 0) - (a.size || 0) * avgCost;
-          }
-          if (a.type === 'YIELD' || a.type === 'REWARD') return sum + (a.usdcSize || 0);
-          return sum;
-        }, 0);
-
-      return sellTotal + activityTotal;
+    function realizedFlow(cutoff: number): number {
+      const { sells, redeems, misc } = flowBreakdown(cutoff);
+      return sells + redeems + misc;
     }
 
     // Top contributing markets per period
@@ -311,9 +314,9 @@ export async function GET() {
         totalPositions: categorized.length,
       },
       pnl: {
-        day: realizedFlow(cutoff1d),
-        week: realizedFlow(cutoff7d),
-        month: realizedFlow(cutoff30d),
+        day:   { ...flowBreakdown(cutoff1d),  total: realizedFlow(cutoff1d)  },
+        week:  { ...flowBreakdown(cutoff7d),  total: realizedFlow(cutoff7d)  },
+        month: { ...flowBreakdown(cutoff30d), total: realizedFlow(cutoff30d) },
         dayMarkets: topMarkets(cutoff1d),
         weekMarkets: topMarkets(cutoff7d),
         monthMarkets: topMarkets(cutoff30d),
