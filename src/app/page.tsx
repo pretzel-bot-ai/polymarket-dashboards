@@ -381,7 +381,7 @@ function PnlStatsPanel({ portfolio, pnl }: {
         ))}
       </div>
 
-      <div className="p-3 grid grid-cols-5 gap-2">
+      <div className="p-3 grid grid-cols-6 gap-2">
         <div className="flex flex-col gap-1">
           <div className="text-amber-500 text-xs tracking-widest">SELLS</div>
           <div className={`text-lg font-bold font-mono ${pnlColor(period.sells)}`}>{fmt$(period.sells)}</div>
@@ -398,6 +398,11 @@ function PnlStatsPanel({ portfolio, pnl }: {
           <div className="text-gray-500 text-xs">{realizedSub}</div>
         </div>
         <div className="flex flex-col gap-1 border-l border-amber-900 pl-2">
+          <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
+          <div className={`text-lg font-bold font-mono ${pnlColor(period.total)}`}>{fmt$(period.total)}</div>
+          <div className="text-gray-500 text-xs">{realizedSub}</div>
+        </div>
+        <div className="flex flex-col gap-1">
           <div className="text-amber-500 text-xs tracking-widest">UNREALIZED</div>
           <div className={`text-lg font-bold font-mono ${pnlColor(unrealized)}`}>{fmt$(unrealized)}</div>
           <div className="text-gray-500 text-xs">open positions</div>
