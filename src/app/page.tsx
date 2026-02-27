@@ -564,89 +564,11 @@ function ActivityFeed({ activity }: { activity: Activity[] }) {
   );
 }
 
-function OrderBook({ book, question }: { book: any; question?: string }) {
-  if (!book) return <div className="text-gray-700 text-xs">Order book unavailable</div>;
-  const { bids, asks, spread, midpoint } = book;
-  const maxSize = Math.max(...bids.map((b: any) => b.size), ...asks.map((a: any) => a.size), 1);
-
-  return (
-    <div>
-      {question && <div className="text-gray-400 text-xs mb-1 truncate">{truncate(question, 60)}</div>}
-      <div className="grid grid-cols-2 gap-x-4 text-xs font-mono">
-        {/* Header */}
-        <div className="grid grid-cols-[1fr_1fr] gap-x-2 text-amber-700 tracking-widest pb-0.5 border-b border-green-900">
-          <div>BID (BUY YES)</div><div className="text-right">SIZE</div>
-        </div>
-        <div className="grid grid-cols-[1fr_1fr] gap-x-2 text-amber-700 tracking-widest pb-0.5 border-b border-red-900">
-          <div>ASK (SELL YES)</div><div className="text-right">SIZE</div>
-        </div>
-        {/* Rows */}
-        {Array.from({ length: Math.max(bids.length, asks.length) }).map((_, i) => {
-          const bid = bids[i];
-          const ask = asks[i];
-          const bidPct = bid ? bid.size / maxSize * 100 : 0;
-          const askPct = ask ? ask.size / maxSize * 100 : 0;
-          return (
-            <>
-              <div key={`b${i}`} className="relative grid grid-cols-[1fr_1fr] gap-x-2 py-px">
-                <div
-                  className="absolute inset-y-0 right-0 bg-green-900/20"
-                  style={{ width: `${bidPct}%` }}
-                />
-                <div className="relative text-green-400">{bid ? (bid.price * 100).toFixed(1) + '¢' : ''}</div>
-                <div className="relative text-gray-500 text-right">{bid ? fmtSize(bid.size) : ''}</div>
-              </div>
-              <div key={`a${i}`} className="relative grid grid-cols-[1fr_1fr] gap-x-2 py-px">
-                <div
-                  className="absolute inset-y-0 left-0 bg-red-900/20"
-                  style={{ width: `${askPct}%` }}
-                />
-                <div className="relative text-red-400">{ask ? (ask.price * 100).toFixed(1) + '¢' : ''}</div>
-                <div className="relative text-gray-500 text-right">{ask ? fmtSize(ask.size) : ''}</div>
-              </div>
-            </>
-          );
-        })}
-      </div>
-      <div className="flex gap-4 mt-1.5 text-xs font-mono border-t border-gray-900 pt-1">
-        <span className="text-amber-600">MID</span>
-        <span className="text-gray-300">{midpoint != null ? (midpoint * 100).toFixed(1) + '¢' : '—'}</span>
-        <span className="text-amber-600">SPREAD</span>
-        <span className={spread != null && spread < 0.02 ? 'text-green-400' : 'text-yellow-500'}>
-          {spread != null ? (spread * 100).toFixed(1) + '¢' : '—'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function RewardsBadge({ rewards }: { rewards: any }) {
-  if (!rewards?.enabled) return (
-    <div className="flex items-center gap-2 text-xs">
-      <span className="text-gray-700">○ NO LP REWARDS</span>
-    </div>
-  );
-  return (
-    <div className="border border-amber-900/50 bg-amber-900/10 px-3 py-2 text-xs space-y-1">
-      <div className="text-amber-400 font-bold tracking-widest">● LP REWARDS ACTIVE  (epoch {rewards.epoch})</div>
-      <div className="flex gap-6 text-gray-300 font-mono">
-        {rewards.minSize > 0 && (
-          <div><span className="text-amber-700">MIN ORDER </span>${rewards.minSize.toFixed(0)}</div>
-        )}
-        {rewards.maxSpread > 0 && (
-          <div><span className="text-amber-700">MAX SPREAD </span>{(rewards.maxSpread * 100).toFixed(1)}% from mid</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function MarketLookupPanel() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedMarket, setSelectedMarket] = useState(0);
 
   async function lookup() {
     const trimmed = url.trim();
@@ -654,7 +576,6 @@ function MarketLookupPanel() {
     setLoading(true);
     setError(null);
     setResult(null);
-    setSelectedMarket(0);
     try {
       const res = await fetch(`/api/market?url=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
@@ -683,14 +604,13 @@ function MarketLookupPanel() {
 
   return (
     <div>
-      {/* URL input */}
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-3">
         <input
           type="text"
           value={url}
           onChange={e => setUrl(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && lookup()}
-          placeholder="https://polymarket.com/event/…"
+          placeholder="https://polymarket.com/event/..."
           className="flex-1 bg-black border border-amber-900 text-gray-300 text-xs px-2 py-1.5 font-mono placeholder-gray-700 focus:outline-none focus:border-amber-600"
         />
         <button
@@ -702,15 +622,13 @@ function MarketLookupPanel() {
         </button>
       </div>
 
-      {error && <div className="text-red-400 text-xs mb-2">{error}</div>}
+      {error && <div className="text-red-400 text-xs">{error}</div>}
 
       {result && (
-        <div className="space-y-4">
-          {/* Title */}
-          <div className="text-gray-200 text-sm font-bold leading-tight">{result.title}</div>
+        <div>
+          <div className="text-gray-200 text-sm font-bold mb-3 leading-tight">{result.title}</div>
 
-          {/* Top stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
             <div className="border border-amber-900 p-2">
               <div className="text-amber-600 text-xs tracking-widest mb-1">CREATED</div>
               <div className="text-white text-sm font-mono">{fmtDateStr(result.startDate)}</div>
@@ -730,87 +648,44 @@ function MarketLookupPanel() {
           </div>
 
           {result.markets.length === 1 ? (
-            /* ── Single market ── */
-            <div className="space-y-3">
-              {/* Price + status row */}
-              <div className="flex gap-6 text-xs font-mono items-center">
-                <div>
-                  <span className="text-amber-600 mr-1">YES</span>
-                  <span className="text-green-400">{(getYesPrice(result.markets[0].outcomePrices) * 100).toFixed(1)}¢</span>
-                </div>
-                <div>
-                  <span className="text-amber-600 mr-1">NO</span>
-                  <span className="text-red-400">{((1 - getYesPrice(result.markets[0].outcomePrices)) * 100).toFixed(1)}¢</span>
-                </div>
-                <div>
-                  <span className="text-amber-600 mr-1">LIQUIDITY</span>
-                  <span className="text-gray-300">${fmtSize(result.liquidity)}</span>
-                </div>
-                <span className={result.markets[0].closed ? 'text-gray-600' : 'text-green-500'}>
-                  {result.markets[0].closed ? '● CLOSED' : '● ACTIVE'}
+            <div className="flex gap-6 text-xs border-t border-gray-900 pt-2">
+              <div>
+                <span className="text-amber-600 mr-1">YES</span>
+                <span className="text-green-400 font-mono">{(getYesPrice(result.markets[0].outcomePrices) * 100).toFixed(1)}¢</span>
+              </div>
+              <div>
+                <span className="text-amber-600 mr-1">NO</span>
+                <span className="text-red-400 font-mono">{((1 - getYesPrice(result.markets[0].outcomePrices)) * 100).toFixed(1)}¢</span>
+              </div>
+              <div>
+                <span className="text-amber-600 mr-1">LIQUIDITY</span>
+                <span className="text-gray-300 font-mono">${fmtSize(result.liquidity)}</span>
+              </div>
+              <div>
+                <span className={result.markets[0].active ? 'text-green-500' : result.markets[0].closed ? 'text-gray-600' : 'text-amber-600'}>
+                  {result.markets[0].closed ? '● CLOSED' : result.markets[0].active ? '● ACTIVE' : '○ INACTIVE'}
                 </span>
-              </div>
-
-              {/* Order book */}
-              <div>
-                <div className="text-amber-600 text-xs tracking-widest mb-2">ORDER BOOK (YES TOKEN)</div>
-                <OrderBook book={result.markets[0].orderBook} />
-              </div>
-
-              {/* Rewards */}
-              <div>
-                <div className="text-amber-600 text-xs tracking-widest mb-2">LP REWARDS</div>
-                <RewardsBadge rewards={result.markets[0].rewards} />
               </div>
             </div>
           ) : (
-            /* ── Multi-market event ── */
-            <div className="space-y-3">
-              {/* Market selector tabs */}
-              <div className="flex gap-1 flex-wrap">
-                {result.markets.map((m: any, i: number) => (
-                  <button
-                    key={i}
-                    onClick={() => setSelectedMarket(i)}
-                    className={`text-xs px-2 py-0.5 border ${
-                      selectedMarket === i
-                        ? 'border-amber-500 text-amber-300 bg-amber-900/30'
-                        : 'border-gray-800 text-gray-600 hover:border-amber-800 hover:text-amber-600'
-                    }`}
-                    title={m.question}
-                  >
-                    {truncate(m.question, 28)}
-                  </button>
-                ))}
+            <div>
+              <div className="text-amber-600 text-xs tracking-widest mb-1 border-t border-gray-900 pt-2">
+                {result.markets.length} MARKETS IN EVENT
               </div>
-
-              {/* Selected market detail */}
-              {(() => {
-                const m = result.markets[selectedMarket];
-                if (!m) return null;
+              <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs text-amber-700 tracking-widest pb-1 border-b border-amber-900">
+                <div>QUESTION</div><div>YES</div><div>24H VOL</div><div>ALL-TIME</div>
+              </div>
+              {result.markets.map((m: any, i: number) => {
                 const yp = getYesPrice(m.outcomePrices);
                 return (
-                  <div className="space-y-3">
-                    <div className="flex gap-6 text-xs font-mono items-center">
-                      <div><span className="text-amber-600 mr-1">YES</span><span className="text-green-400">{(yp * 100).toFixed(1)}¢</span></div>
-                      <div><span className="text-amber-600 mr-1">NO</span><span className="text-red-400">{((1 - yp) * 100).toFixed(1)}¢</span></div>
-                      <div><span className="text-amber-600 mr-1">24H VOL</span><span className="text-gray-300">${fmtSize(m.volume24h)}</span></div>
-                      <div><span className="text-amber-600 mr-1">LIQUIDITY</span><span className="text-gray-300">${fmtSize(m.liquidity)}</span></div>
-                      <span className={m.closed ? 'text-gray-600' : 'text-green-500'}>
-                        {m.closed ? '● CLOSED' : '● ACTIVE'}
-                      </span>
-                    </div>
-                    <div>
-                      <div className="text-amber-600 text-xs tracking-widest mb-2">ORDER BOOK (YES TOKEN)</div>
-                      <OrderBook book={m.orderBook} />
-                    </div>
-                    <div>
-                      <div className="text-amber-600 text-xs tracking-widest mb-2">LP REWARDS</div>
-                      <RewardsBadge rewards={m.rewards} />
-                    </div>
+                  <div key={i} className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5 border-b border-gray-900">
+                    <div className="text-gray-300 truncate" title={m.question}>{truncate(m.question, 48)}</div>
+                    <div className="text-green-400 font-mono">{(yp * 100).toFixed(0)}¢</div>
+                    <div className="text-gray-400 font-mono">${fmtSize(m.volume24h)}</div>
+                    <div className="text-gray-400 font-mono">${fmtSize(m.volume)}</div>
                   </div>
                 );
-              })()}
+              })}
             </div>
           )}
         </div>
