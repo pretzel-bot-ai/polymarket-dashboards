@@ -92,6 +92,25 @@ function autoCategorize(title: string): string {
   return 'Other';
 }
 
+// Fetches Gamma markets with LP requirements set — used to build a condition_id → liquidity map.
+// rewardsMinSize=1 filters to only markets that have an active LP programme configured.
+// 5 pages × 500 = up to 2500 markets, cached 1 hour.
+async function fetchGammaLiquidityMarkets(): Promise<any[]> {
+  const pages = await Promise.all(
+    Array.from({ length: 5 }, (_, i) =>
+      fetch(`https://gamma-api.polymarket.com/markets?rewardsMinSize=1&active=true&closed=false&limit=500&offset=${i * 500}`, {
+        next: { revalidate: 3600 },
+      }).then(r => r.ok ? r.json() : []).then((d: any) => Array.isArray(d) ? d : []).catch(() => [])
+    )
+  );
+  const all: any[] = [];
+  for (const page of pages) {
+    if (page.length === 0) break;
+    all.push(...page);
+  }
+  return all;
+}
+
 // Exhaustively fetches all Polymarket reward markets (up to 20 pages × 100).
 // Cached for 1 hour — the list changes rarely and full coverage matters more than freshness.
 async function fetchAllRewardMarkets(): Promise<any[]> {
@@ -235,7 +254,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2, allRewardMarkets] = await Promise.all([
+    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaLiquidityMarkets, allRewardMarkets] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -261,13 +280,8 @@ export async function GET() {
       fetchActiveMarkets().catch(() => []),
       fetchTrendingMarkets().catch(() => []),
       fetchNewsKeywordWeights().catch(() => ({})),
-      // Gamma events — used only for liquidity lookup (rewardsDailyRate in Gamma is a placeholder 0.001)
-      fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=0', {
-        next: { revalidate: 3600 },
-      }).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=100', {
-        next: { revalidate: 3600 },
-      }).then(r => r.ok ? r.json() : []).catch(() => []),
+      // Gamma markets with LP config — for condition_id → liquidity map (5 pages × 500, 1h cache)
+      fetchGammaLiquidityMarkets(),
       // Exhaustive rewards market list — 20 pages × 100, cached 1 hour
       fetchAllRewardMarkets(),
     ]);
@@ -753,17 +767,14 @@ export async function GET() {
       maxSpread: number;
     }
 
-    // Build condition_id → liquidity map from Gamma events (has correct liquidity values)
+    // Build condition_id → liquidity/volume map from Gamma markets (flat list, up to 2500 markets)
     const liquidityMap = new Map<string, number>();
     const volumeTotalMap = new Map<string, number>();
-    for (const event of [...(Array.isArray(gammaRewardsPage1) ? gammaRewardsPage1 : []), ...(Array.isArray(gammaRewardsPage2) ? gammaRewardsPage2 : [])]) {
-      const markets: any[] = Array.isArray(event.markets) ? event.markets : [];
-      for (const m of markets) {
-        const cid = m.conditionId;
-        if (cid && m.liquidity) {
-          liquidityMap.set(cid, parseFloat(m.liquidity) || 0);
-          volumeTotalMap.set(cid, parseFloat(m.volume) || 0);
-        }
+    for (const m of (gammaLiquidityMarkets as any[])) {
+      const cid = m.conditionId;
+      if (cid) {
+        liquidityMap.set(cid, parseFloat(m.liquidity) || 0);
+        volumeTotalMap.set(cid, parseFloat(m.volume) || 0);
       }
     }
 
