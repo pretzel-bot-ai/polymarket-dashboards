@@ -217,7 +217,12 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2] = await Promise.all([
+    const polyRewardsFetch = (offset: number) =>
+      fetch(`https://polymarket.com/api/rewards/markets?limit=100&offset=${offset}`, {
+        next: { revalidate: 300 },
+      }).then(r => r.json()).then(d => d?.data || []).catch(() => []);
+
+    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2, juicyRawP100, juicyRawP200, juicyRawP300, juicyRawP400] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -232,9 +237,7 @@ export async function GET() {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
       // Unfiltered top-100 (fallback / supplement if tag filter is empty)
-      fetch(`https://polymarket.com/api/rewards/markets?limit=100`, {
-        next: { revalidate: 300 },
-      }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
+      polyRewardsFetch(0),
       fetch(`https://data-api.polymarket.com/value?user=${WALLET}`, {
         next: { revalidate: 60 },
       }).then(r => r.json()).then(d => Array.isArray(d) ? d[0] : d).catch(() => null),
@@ -243,14 +246,18 @@ export async function GET() {
       fetchActiveMarkets().catch(() => []),
       fetchTrendingMarkets().catch(() => []),
       fetchNewsKeywordWeights().catch(() => ({})),
-      // Gamma events with reward data — page 1
+      // Gamma events — used only for liquidity lookup (rewardsDailyRate in Gamma is a placeholder 0.001)
       fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=0', {
         next: { revalidate: 300 },
       }).then(r => r.ok ? r.json() : []).catch(() => []),
-      // Gamma events with reward data — page 2
       fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=100', {
         next: { revalidate: 300 },
       }).then(r => r.ok ? r.json() : []).catch(() => []),
+      // Extra Polymarket rewards pages for broader juicy-panel coverage
+      polyRewardsFetch(100),
+      polyRewardsFetch(200),
+      polyRewardsFetch(300),
+      polyRewardsFetch(400),
     ]);
 
     // Merge crypto tag-filtered results with top-raw, deduplicating by condition_id.
@@ -714,11 +721,9 @@ export async function GET() {
       }));
 
     // === Juicy LP Rewards ===
-    // Flatten all markets from both Gamma reward event pages
-    const gammaAllEvents: any[] = [
-      ...(Array.isArray(gammaRewardsPage1) ? gammaRewardsPage1 : []),
-      ...(Array.isArray(gammaRewardsPage2) ? gammaRewardsPage2 : []),
-    ];
+    // NOTE: Gamma API's clobRewards[].rewardsDailyRate is always a placeholder (0.001).
+    // Real rates come from polymarket.com/api/rewards/markets → rewards_config[].rate_per_day.
+    // Gamma events pages are used only to build a condition_id → liquidity lookup.
 
     interface JuicyRewardMarket {
       question: string;
@@ -735,43 +740,66 @@ export async function GET() {
       maxSpread: number;
     }
 
-    const juicyRewards: JuicyRewardMarket[] = [];
-    for (const event of gammaAllEvents) {
-      const markets: any[] = Array.isArray(event.markets) ? event.markets : [event];
+    // Build condition_id → liquidity map from Gamma events (has correct liquidity values)
+    const liquidityMap = new Map<string, number>();
+    const volumeTotalMap = new Map<string, number>();
+    for (const event of [...(Array.isArray(gammaRewardsPage1) ? gammaRewardsPage1 : []), ...(Array.isArray(gammaRewardsPage2) ? gammaRewardsPage2 : [])]) {
+      const markets: any[] = Array.isArray(event.markets) ? event.markets : [];
       for (const m of markets) {
-        // Sum all reward entries for total daily rate
-        const rewards_arr: any[] = Array.isArray(m.clobRewards) ? m.clobRewards : [];
-        const totalDailyRate = rewards_arr.reduce((s: number, r: any) => s + (parseFloat(r.rewardsDailyRate) || 0), 0);
-        if (totalDailyRate < 1.0) continue;
-
-        const liquidity = parseFloat(m.liquidity) || 0;
-        if (liquidity < 100) continue;
-
-        const volume24h = parseFloat(m.volume24hr ?? m.volume24h) || 0;
-        const volumeTotal = parseFloat(m.volume) || 0;
-
-        const rewardApy = (totalDailyRate * 365 / liquidity) * 100;
-        const volumeTurnover = volume24h / liquidity;
-        const juiceScore = rewardApy / (1 + volumeTurnover);
-
-        const eventSlug = event.slug || m.eventSlug || '';
-        const marketSlug = m.slug || '';
-
-        juicyRewards.push({
-          question: m.question || event.title || '',
-          eventSlug,
-          marketSlug,
-          ratePerDay: totalDailyRate,
-          liquidity,
-          volume24h,
-          volumeTotal,
-          rewardApy,
-          volumeTurnover,
-          juiceScore,
-          minSize: parseFloat(m.rewardsMinSize) || 0,
-          maxSpread: parseFloat(m.rewardsMaxSpread) || 0,
-        });
+        const cid = m.conditionId;
+        if (cid && m.liquidity) {
+          liquidityMap.set(cid, parseFloat(m.liquidity) || 0);
+          volumeTotalMap.set(cid, parseFloat(m.volume) || 0);
+        }
       }
+    }
+
+    // Build rate map from all Polymarket rewards API pages (real rates)
+    // Pages: rewardsCryptoTag (tag=crypto), rewardsTopRaw (offset=0), + offsets 100-400
+    const allPolyRewardsMarkets: any[] = [
+      ...(rewardsCryptoTag as any[]),
+      ...(rewardsTopRaw as any[]),
+      ...(juicyRawP100 as any[]),
+      ...(juicyRawP200 as any[]),
+      ...(juicyRawP300 as any[]),
+      ...(juicyRawP400 as any[]),
+    ];
+
+    const seenJuicyCids = new Set<string>();
+    const juicyRewards: JuicyRewardMarket[] = [];
+
+    for (const m of allPolyRewardsMarkets) {
+      const cid = m.condition_id;
+      if (!cid || seenJuicyCids.has(cid)) continue;
+      seenJuicyCids.add(cid);
+
+      const totalDailyRate: number = (m.rewards_config || []).reduce((s: number, r: any) => s + (r.rate_per_day || 0), 0);
+      if (totalDailyRate < 1.0) continue;
+
+      const liquidity = liquidityMap.get(cid) || 0;
+      if (liquidity < 100) continue;
+
+      const volume24h = parseFloat(m.volume_24hr) || 0;
+      const volumeTotal = volumeTotalMap.get(cid) || 0;
+
+      const rewardApy = (totalDailyRate * 365 / liquidity) * 100;
+      const volumeTurnover = volume24h / liquidity;
+      const juiceScore = rewardApy / (1 + volumeTurnover);
+
+      juicyRewards.push({
+        question: m.question || '',
+        eventSlug: m.event_slug || '',
+        marketSlug: m.market_slug || '',
+        ratePerDay: totalDailyRate,
+        liquidity,
+        volume24h,
+        volumeTotal,
+        rewardApy,
+        volumeTurnover,
+        juiceScore,
+        minSize: m.rewards_min_size || 0,
+        maxSpread: m.rewards_max_spread || 0,
+      });
     }
     juicyRewards.sort((a, b) => b.juiceScore - a.juiceScore);
     const juicyRewardsTop = juicyRewards.slice(0, 30);
