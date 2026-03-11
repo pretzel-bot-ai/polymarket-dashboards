@@ -55,20 +55,56 @@ interface Activity {
   transactionHash: string | null;
 }
 
+interface JuicyRewardMarket {
+  question: string;
+  eventSlug: string;
+  marketSlug: string;
+  ratePerDay: number;
+  liquidity: number;
+  volume24h: number;
+  volumeTotal: number;
+  rewardApy: number;
+  volumeTurnover: number;
+  juiceScore: number;
+  minSize: number;
+  maxSpread: number;
+}
+
 interface SuggestedMarket {
   title: string;
   slug: string;
   eventSlug: string;
   category: string;
   volume: number;
+  volume24h: number;
   yesPrice: number;
   score: number;
   reason: string;
+  newsMatch: string[];
+  trending: boolean;
+  priceMatch: boolean;
+  daysToResolution: number | null;
+}
+
+interface VolumePeriod {
+  buyVol: number;
+  sellVol: number;
+  total: number;
+  buyShares: number;
+  sellShares: number;
+  totalShares: number;
+  tradeCount: number;
 }
 
 interface DashboardData {
   wallet: string;
   updatedAt: string;
+  volume: {
+    day: VolumePeriod;
+    week: VolumePeriod;
+    month: VolumePeriod;
+    all: VolumePeriod;
+  };
   portfolio: {
     totalValue: number;
     positionsValue: number;
@@ -95,6 +131,7 @@ interface DashboardData {
     active: RewardsMarket[];
     top: RewardsMarket[];
   };
+  juicyRewards: JuicyRewardMarket[];
   suggestions: SuggestedMarket[];
   activity: Activity[];
 }
@@ -362,6 +399,83 @@ function RewardsPanel({ markets, isActive }: { markets: RewardsMarket[]; isActiv
           </div>
         )}
         </>
+      )}
+    </div>
+  );
+}
+
+function JuicyRewardsPanel({ markets }: { markets: JuicyRewardMarket[] }) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(markets.length / PAGE_SIZE);
+  const pageMarkets = markets.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+  function juiceColor(score: number): string {
+    if (score >= 100) return 'text-amber-300';
+    if (score >= 20)  return 'text-green-400';
+    return 'text-gray-500';
+  }
+
+  if (markets.length === 0) {
+    return <div className="text-gray-600 text-xs">No juicy LP markets found.</div>;
+  }
+
+  return (
+    <div>
+      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs text-amber-600 tracking-widest pb-1 border-b border-amber-900 mb-1">
+        <div>MARKET</div>
+        <div>$/DAY</div>
+        <div>24H VOL</div>
+        <div>LIQUIDITY</div>
+        <div>APY %</div>
+        <div>JUICE</div>
+      </div>
+      {pageMarkets.map((m, i) => {
+        const href = m.eventSlug && m.marketSlug
+          ? `https://polymarket.com/event/${m.eventSlug}/${m.marketSlug}`
+          : m.eventSlug
+          ? `https://polymarket.com/event/${m.eventSlug}`
+          : '#';
+        const jc = juiceColor(m.juiceScore);
+        return (
+          <div key={i} className="border-b border-gray-900 py-0.5 hover:bg-amber-900/10 transition-colors">
+            <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs">
+              <div className="text-gray-300 truncate" title={m.question}>
+                <a href={href} target="_blank" rel="noopener noreferrer" className="hover:text-amber-300">
+                  {truncate(m.question, 50)}
+                </a>
+              </div>
+              <div className="text-green-400 font-mono">${m.ratePerDay.toFixed(2)}</div>
+              <div className="text-gray-400 font-mono">{m.volume24h > 0 ? `$${fmtSize(m.volume24h)}` : '—'}</div>
+              <div className="text-gray-400 font-mono">${fmtSize(m.liquidity)}</div>
+              <div className={`font-mono ${jc}`}>{m.rewardApy.toFixed(0)}%</div>
+              <div className={`font-mono font-bold ${jc}`}>{m.juiceScore.toFixed(0)}</div>
+            </div>
+            {(m.minSize > 0 || m.maxSpread > 0) && (
+              <div className="text-[10px] text-gray-700 mt-0.5 pl-0">
+                MIN: ${m.minSize.toFixed(0)} · SPREAD: {(m.maxSpread * 100).toFixed(0)}¢
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {totalPages > 1 && (
+        <div className="flex items-center gap-3 mt-3 text-xs">
+          <button
+            onClick={() => setPage(p => Math.max(0, p - 1))}
+            disabled={page === 0}
+            className="px-2 py-0.5 border border-gray-800 text-gray-500 hover:border-amber-700 hover:text-amber-400 disabled:opacity-30"
+          >
+            ← PREV
+          </button>
+          <span className="text-gray-600 font-mono">{page + 1} / {totalPages} ({markets.length} total)</span>
+          <button
+            onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+            disabled={page === totalPages - 1}
+            className="px-2 py-0.5 border border-gray-800 text-gray-500 hover:border-amber-700 hover:text-amber-400 disabled:opacity-30"
+          >
+            NEXT →
+          </button>
+        </div>
       )}
     </div>
   );
@@ -710,7 +824,7 @@ function MarketLookupPanel() {
 
 function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[] }) {
   const [showAll, setShowAll] = useState(false);
-  const display = showAll ? suggestions : suggestions.slice(0, 10);
+  const display = showAll ? suggestions : suggestions.slice(0, 12);
 
   if (suggestions.length === 0) {
     return <div className="text-gray-600 text-xs">No suggestions available.</div>;
@@ -723,9 +837,32 @@ function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[]
           const href = m.eventSlug
             ? `https://polymarket.com/event/${m.eventSlug}`
             : `https://polymarket.com/market/${m.slug}`;
+          const hasNews     = m.newsMatch.length > 0 && m.newsMatch.length > 0;
+          const accentClass = m.priceMatch ? 'border-l-2 border-l-amber-700 pl-2' : hasNews ? 'border-l-2 border-l-cyan-900 pl-2' : '';
           return (
-            <div key={i} className="border-b border-gray-900 pb-2 hover:bg-amber-900/5 transition-colors">
-              <div className="flex items-start justify-between gap-2 mb-0.5">
+            <div key={i} className={`border-b border-gray-900 pb-2 hover:bg-amber-900/5 transition-colors ${accentClass}`}>
+              {/* Badges row */}
+              <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                {m.priceMatch && (
+                  <span className="text-amber-300 border border-amber-700 px-1 text-[10px] font-mono tracking-wide">
+                    PRICE MATCH
+                  </span>
+                )}
+                {m.trending && (
+                  <span className="text-green-500 border border-green-900 px-1 text-[10px] font-mono tracking-wide">
+                    TRENDING
+                  </span>
+                )}
+                {hasNews && (
+                  <span className="text-cyan-600 border border-cyan-900 px-1 text-[10px] font-mono tracking-wide">
+                    NEWS
+                  </span>
+                )}
+                <span className="text-gray-700 text-[10px]">{m.category}</span>
+              </div>
+
+              {/* Title + price */}
+              <div className="flex items-start justify-between gap-2">
                 <a
                   href={href}
                   target="_blank"
@@ -733,25 +870,27 @@ function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[]
                   className="text-gray-200 text-xs hover:text-amber-300 leading-tight flex-1"
                   title={m.title}
                 >
-                  {truncate(m.title, 52)}
+                  {truncate(m.title, 55)}
                 </a>
                 <div className="flex flex-col items-end shrink-0 gap-0.5">
                   <span className="text-xs font-mono text-green-400">
                     YES {(m.yesPrice * 100).toFixed(0)}¢
                   </span>
-                  <span className="text-xs font-mono text-gray-700">
-                    {(m.score * 100).toFixed(0)}% match
-                  </span>
+                  {m.daysToResolution !== null && m.daysToResolution >= 0 && (
+                    <span className="text-[10px] font-mono text-gray-700">
+                      {m.daysToResolution}d left
+                    </span>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 text-xs flex-wrap">
-                <span className="text-amber-700">{m.category}</span>
-                <span className="text-gray-800">·</span>
-                <span className="text-gray-600">${fmtSize(m.volume)} vol</span>
-                {m.reason && (
+
+              {/* Reason + meta */}
+              <div className="flex items-center gap-1.5 text-[10px] mt-0.5 flex-wrap">
+                {m.reason && <span className="text-gray-500">{m.reason}</span>}
+                {m.volume24h > 0 && (
                   <>
                     <span className="text-gray-800">·</span>
-                    <span className="text-gray-500 truncate">{m.reason}</span>
+                    <span className="text-gray-700">${fmtSize(m.volume24h)} 24h</span>
                   </>
                 )}
               </div>
@@ -759,7 +898,7 @@ function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[]
           );
         })}
       </div>
-      {suggestions.length > 10 && (
+      {suggestions.length > 12 && (
         <button
           onClick={() => setShowAll(v => !v)}
           className="mt-2 text-xs text-amber-700 hover:text-amber-400"
@@ -768,6 +907,75 @@ function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[]
         </button>
       )}
     </div>
+  );
+}
+
+function VolumePanel({ volume }: { volume: DashboardData['volume'] }) {
+  const periods: { label: string; key: keyof typeof volume }[] = [
+    { label: '1D', key: 'day' },
+    { label: '7D', key: 'week' },
+    { label: '30D', key: 'month' },
+    { label: 'ALL', key: 'all' },
+  ];
+
+  const maxShares = Math.max(...periods.map(p => volume[p.key].totalShares), 1);
+
+  return (
+    <Panel title="TRADING VOLUME">
+      <div className="grid grid-cols-4 gap-3">
+        {periods.map(({ label, key }) => {
+          const v = volume[key];
+          const barPct = (v.totalShares / maxShares) * 100;
+          return (
+            <div key={key} className="border border-amber-900 p-2 flex flex-col gap-1.5">
+              <div className="text-amber-400 text-xs font-bold tracking-widest">{label}</div>
+
+              {/* Mini bar scaled to share volume */}
+              <div className="h-1 bg-gray-900 border border-gray-800">
+                <div className="h-full bg-amber-700" style={{ width: `${barPct}%` }} />
+              </div>
+
+              <div className="flex flex-col gap-0.5 text-xs font-mono">
+                {/* USDC rows */}
+                <div className="text-gray-700 tracking-widest text-[10px] mt-0.5">USDC</div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">BUY</span>
+                  <span className="text-green-400">{fmt$(v.buyVol)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">SELL</span>
+                  <span className="text-red-400">{fmt$(v.sellVol)}</span>
+                </div>
+                <div className="flex justify-between border-t border-gray-900 pt-0.5 mt-0.5">
+                  <span className="text-amber-700">TOTAL</span>
+                  <span className="text-white font-bold">{fmt$(v.total)}</span>
+                </div>
+
+                {/* Shares rows */}
+                <div className="text-gray-700 tracking-widest text-[10px] mt-1.5">SHARES</div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">BUY</span>
+                  <span className="text-green-400">{fmtSize(v.buyShares)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">SELL</span>
+                  <span className="text-red-400">{fmtSize(v.sellShares)}</span>
+                </div>
+                <div className="flex justify-between border-t border-gray-900 pt-0.5 mt-0.5">
+                  <span className="text-amber-700">TOTAL</span>
+                  <span className="text-white font-bold">{fmtSize(v.totalShares)}</span>
+                </div>
+
+                <div className="flex justify-between mt-1 pt-0.5 border-t border-gray-900">
+                  <span className="text-gray-700">TRADES</span>
+                  <span className="text-gray-500">{v.tradeCount}</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Panel>
   );
 }
 
@@ -821,7 +1029,7 @@ export default function Dashboard() {
     );
   }
 
-  const { portfolio, pnl, categoryPnl, positions, rewards, suggestions, activity } = data;
+  const { portfolio, pnl, volume, categoryPnl, positions, rewards, juicyRewards, suggestions, activity } = data;
   const maxCatAbs = Math.max(...categoryPnl.map(c => Math.abs(c.total)), 1);
 
   // LP rewards display
@@ -870,6 +1078,11 @@ export default function Dashboard() {
           sub={`positions ${fmt$(portfolio.positionsValue)} + cash ${fmt$(portfolio.onChainUsdc, 2)}`}
         />
         <PnlStatsPanel portfolio={portfolio} pnl={pnl} />
+      </div>
+
+      {/* Volume Panel */}
+      <div className="mb-3">
+        <VolumePanel volume={volume} />
       </div>
 
       {/* Middle Row: PnL by Period + Category */}
@@ -924,6 +1137,11 @@ export default function Dashboard() {
           ? <div className="text-gray-600 text-xs">No LP rewards data available.</div>
           : <RewardsPanel markets={rewardsDisplay} isActive={rewards.active.length > 0} />
         }
+      </Panel>
+
+      {/* Juicy LP Markets */}
+      <Panel title={`JUICY LP MARKETS (${(juicyRewards ?? []).length})`} className="mb-3">
+        <JuicyRewardsPanel markets={juicyRewards ?? []} />
       </Panel>
 
       {/* Positions Table */}

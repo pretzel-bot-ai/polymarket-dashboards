@@ -132,6 +132,8 @@ async function fetchOnChainUsdc(wallet: string): Promise<number> {
   return native + bridged;
 }
 
+const STOP_WORDS = new Set(['the','a','an','is','in','on','at','to','for','of','and','or','by','be','will','with','from','as','it','this','that','was','are','has','have','had','do','did','not','no','can','get','its','may','who','how','what','when','which','than','up','if','after','before','during','their','they','he','she','we','you','your','his','her','our','about','over','into','then','more','also','been','would','could','should','just','does','make','some','such','only','market','markets','percent','between','first','year','says','said','have','than','other','much','new','per','hit','high','low','win','lose','any','all','one','two','three','next','last','ever','least','most']);
+
 async function fetchActiveMarkets(): Promise<any[]> {
   try {
     const res = await fetch(
@@ -165,6 +167,49 @@ async function fetchActivity(): Promise<any[]> {
   return results;
 }
 
+// Markets sorted by 24h volume — these are the ones news is driving right now
+async function fetchTrendingMarkets(): Promise<any[]> {
+  try {
+    const res = await fetch(
+      'https://gamma-api.polymarket.com/markets?active=true&closed=false&order=volume24hr&ascending=false&limit=150',
+      { next: { revalidate: 300 } }
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+// BBC World News RSS → keyword weights (word → fraction of headlines it appears in)
+async function fetchNewsKeywordWeights(): Promise<Record<string, number>> {
+  try {
+    const res = await fetch('https://feeds.bbci.co.uk/news/world/rss.xml', {
+      next: { revalidate: 900 },
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PolyDash/1.0)' },
+    });
+    if (!res.ok) return {};
+    const xml = await res.text();
+    // Extract titles — handles both plain and CDATA-wrapped
+    const titleMatches = [...xml.matchAll(/<title>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/title>/g)];
+    const headlines = titleMatches.map(m => m[1].trim()).filter(Boolean).slice(1, 40);
+    // Count how many headlines contain each keyword
+    const freq: Record<string, number> = {};
+    for (const h of headlines) {
+      const words = new Set(h.toLowerCase().split(/\W+/).filter(w => w.length > 3 && !STOP_WORDS.has(w)));
+      for (const w of words) freq[w] = (freq[w] || 0) + 1;
+    }
+    // Normalise: weight = count / max_count → [0, 1]
+    const maxFreq = Math.max(...Object.values(freq), 1);
+    const weights: Record<string, number> = {};
+    for (const [w, f] of Object.entries(freq)) weights[w] = f / maxFreq;
+    return weights;
+  } catch {
+    return {};
+  }
+}
+
 export async function GET() {
   try {
     const now = Math.floor(Date.now() / 1000);
@@ -172,7 +217,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsEarning, rewardsAll, valueData, activity, onChainUsdc, activeMarkets] = await Promise.all([
+    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -182,7 +227,11 @@ export async function GET() {
       fetch(`https://polymarket.com/api/rewards/markets?maker=${WALLET}&limit=100`, {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
-      // Without maker filter → unfiltered top-100 reward markets sorted by rate
+      // Crypto tag-filtered → native API filter for crypto category markets
+      fetch(`https://polymarket.com/api/rewards/markets?tag_slug=crypto&limit=100`, {
+        next: { revalidate: 300 },
+      }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
+      // Unfiltered top-100 (fallback / supplement if tag filter is empty)
       fetch(`https://polymarket.com/api/rewards/markets?limit=100`, {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
@@ -192,7 +241,27 @@ export async function GET() {
       fetchActivity(),
       fetchOnChainUsdc(WALLET).catch(() => 0),
       fetchActiveMarkets().catch(() => []),
+      fetchTrendingMarkets().catch(() => []),
+      fetchNewsKeywordWeights().catch(() => ({})),
+      // Gamma events with reward data — page 1
+      fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=0', {
+        next: { revalidate: 300 },
+      }).then(r => r.ok ? r.json() : []).catch(() => []),
+      // Gamma events with reward data — page 2
+      fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=100', {
+        next: { revalidate: 300 },
+      }).then(r => r.ok ? r.json() : []).catch(() => []),
     ]);
+
+    // Merge crypto tag-filtered results with top-raw, deduplicating by condition_id.
+    // If the rewards API honours tag_slug=crypto, rewardsCryptoTag will contain many markets
+    // that the unfiltered first-100 fetch would miss entirely.
+    const seenRewardCids = new Set<string>();
+    const rewardsAll = [...(rewardsCryptoTag as any[]), ...(rewardsTopRaw as any[])].filter((m: any) => {
+      if (!m.condition_id || seenRewardCids.has(m.condition_id)) return false;
+      seenRewardCids.add(m.condition_id);
+      return true;
+    });
 
     // Categorize positions
     const categorized = (Array.isArray(positions) ? positions : []).map((p: any) => ({
@@ -322,6 +391,24 @@ export async function GET() {
       return sells + redeems + misc;
     }
 
+    // Volume breakdown per period
+    function volumeBreakdown(cutoff: number) {
+      let buyVol = 0, sellVol = 0, buyShares = 0, sellShares = 0, tradeCount = 0;
+      for (const a of sortedActivity) {
+        if (a.type !== 'TRADE' || (a.timestamp || 0) < cutoff) continue;
+        tradeCount++;
+        const usdc   = a.usdcSize || 0;
+        const shares = Math.abs(a.size || 0);
+        if (a.side === 'BUY')  { buyVol  += usdc; buyShares  += shares; }
+        if (a.side === 'SELL') { sellVol += usdc; sellShares += shares; }
+      }
+      return {
+        buyVol, sellVol, total: buyVol + sellVol,
+        buyShares, sellShares, totalShares: buyShares + sellShares,
+        tradeCount,
+      };
+    }
+
     // Top contributing markets per period
     function topMarkets(cutoff: number, n = 5) {
       const map: Record<string, number> = {};
@@ -357,77 +444,210 @@ export async function GET() {
     const allTimeRealized = realizedFlow(0) + zeroResolutionLoss;
     const allTimeNet      = allTimeRealized + allTimeUnrealized;
 
-    // === Suggested Markets: profile user's trading behaviour ===
-    // Build category distribution and keyword frequency from BUY events
+    // === Suggested Markets ===
     const buyEvents = sortedActivity.filter((a: any) => a.type === 'TRADE' && a.side === 'BUY');
-    const totalBuyCount = buyEvents.length || 1;
 
-    const catBuyCount: Record<string, number> = {};
+    // ── 1. Category stats ──────────────────────────────────────────────────────
+    const catStats: Record<string, { usdc: number; pnl: number; count: number }> = {};
     for (const a of buyEvents) {
       const cat = autoCategorize(a.title || '');
-      catBuyCount[cat] = (catBuyCount[cat] || 0) + 1;
+      if (!catStats[cat]) catStats[cat] = { usdc: 0, pnl: 0, count: 0 };
+      catStats[cat].usdc  += a.usdcSize || 0;
+      catStats[cat].count += 1;
+    }
+    for (const sp of sellProfits) {
+      const cat = autoCategorize(sp.title);
+      if (!catStats[cat]) catStats[cat] = { usdc: 0, pnl: 0, count: 0 };
+      catStats[cat].pnl += sp.profit;
+    }
+    for (const a of sortedActivity) {
+      if (a.type !== 'REDEEM' || !a.conditionId) continue;
+      const avgCost = finalAvgCost[a.conditionId] ?? 0;
+      const profit  = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
+      const cat = autoCategorize(a.title || '');
+      if (!catStats[cat]) catStats[cat] = { usdc: 0, pnl: 0, count: 0 };
+      catStats[cat].pnl += profit;
+    }
+    const totalUsdc  = Object.values(catStats).reduce((s, c) => s + c.usdc, 0) || 1;
+    const allEdges   = Object.values(catStats).map(c => c.usdc > 0 ? c.pnl / c.usdc : 0);
+    const maxEdge    = Math.max(...allEdges, 0.001);
+    const minEdgeAbs = Math.abs(Math.min(...allEdges, -0.001));
+
+    // ── 2. HARD CATEGORY GATE ─────────────────────────────────────────────────
+    // Only suggest markets in categories where the user has meaningfully traded.
+    // This prevents Sports, Pop Culture etc from appearing if Pascal never bets there.
+    const allowedCategories = new Set(
+      Object.entries(catStats)
+        .filter(([, s]) => (s.usdc / totalUsdc) >= 0.03 || s.count >= 10)
+        .map(([cat]) => cat)
+    );
+
+    function getCatAffinityScore(cat: string): number {
+      const s = catStats[cat];
+      if (!s || s.usdc === 0) return 0;
+      const usdcShare = Math.min((s.usdc / totalUsdc) * 5, 1);
+      const edge      = s.pnl / s.usdc;
+      const edgeNorm  = edge >= 0
+        ? 0.5 + (edge / maxEdge) * 0.5
+        : Math.max(0, 0.5 - (Math.abs(edge) / minEdgeAbs) * 0.5);
+      return usdcShare * 0.6 + edgeNorm * 0.4;
     }
 
-    const stopWords = new Set(['the','a','an','is','in','on','at','to','for','of','and','or','by','be','will','with','from','as','it','this','that','was','are','has','have','had','do','did','not','no','can','get','its','may','who','how','what','when','which','than','up','if','after','before','during','their','they','he','she','we','you','your','his','her','our','about','over','into','then','more','also','been','would','could','should','just','its','vs','does']);
-    const kwCount: Record<string, number> = {};
+    // ── 3. Category-scoped entity maps ────────────────────────────────────────
+    // Built per-category so "elon" from Crypto trades CANNOT boost tweet-count
+    // markets in Other/PopCulture — entity signals are strictly scoped.
+    const catEntityMap: Record<string, Record<string, number>> = {};
     for (const a of buyEvents) {
-      const words = (a.title || '').toLowerCase().split(/\W+/).filter((w: string) => w.length > 3 && !stopWords.has(w));
-      for (const w of words) {
-        kwCount[w] = (kwCount[w] || 0) + 1;
+      const cat = autoCategorize(a.title || '');
+      if (!allowedCategories.has(cat)) continue;
+      if (!catEntityMap[cat]) catEntityMap[cat] = {};
+      const ageDays = (now - (a.timestamp || 0)) / 86400;
+      const recency = ageDays < 7 ? 2.0 : ageDays < 30 ? 1.0 : ageDays < 90 ? 0.5 : 0.2;
+      const usdc    = a.usdcSize || 1;
+      for (const w of (a.title || '').toLowerCase().split(/\W+/)) {
+        if (w.length > 3 && !STOP_WORDS.has(w))
+          catEntityMap[cat][w] = (catEntityMap[cat][w] || 0) + usdc * recency;
       }
     }
-    const topKeywords = Object.entries(kwCount)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 40)
-      .map(([w]) => w);
+    const catEntityMax: Record<string, number> = {};
+    for (const [cat, map] of Object.entries(catEntityMap))
+      catEntityMax[cat] = Math.max(...Object.values(map), 1);
 
-    const buyPrices = buyEvents
-      .map((a: any) => a.price || 0)
-      .filter((p: number) => p > 0 && p < 1)
-      .sort((a: number, b: number) => a - b);
-    const avgBuyPrice = buyPrices.length > 0
-      ? buyPrices.reduce((s: number, p: number) => s + p, 0) / buyPrices.length
-      : 0.5;
+    function getCatEntityScore(cat: string, titleWords: string[]): number {
+      const map  = catEntityMap[cat];
+      const maxW = catEntityMax[cat];
+      if (!map || !maxW) return 0;
+      let score = 0;
+      for (const w of titleWords) score += (map[w] || 0) / maxW;
+      return Math.min(score / 2.5, 1);
+    }
 
-    // Exclude all conditionIds the user has ever interacted with
+    // ── 4. Price range profile: USDC-weighted across 10¢ buckets ──────────────
+    const priceBuckets = new Array(10).fill(0);
+    let totalBuyUsdc = 0;
+    for (const a of buyEvents) {
+      const p = a.price || 0;
+      if (p <= 0 || p >= 1) continue;
+      const b = Math.min(Math.floor(p * 10), 9);
+      priceBuckets[b] += a.usdcSize || 1;
+      totalBuyUsdc     += a.usdcSize || 1;
+    }
+    const priceProfile      = priceBuckets.map(b => totalBuyUsdc > 0 ? b / totalBuyUsdc : 0);
+    const topBucketIndices  = [...priceProfile.map((v, i) => ({ v, i }))]
+      .sort((a, b) => b.v - a.v).slice(0, 2).map(x => x.i);
+    function getPriceScore(yesPrice: number): number {
+      if (yesPrice <= 0 || yesPrice >= 1) return 0;
+      const b  = Math.min(Math.floor(yesPrice * 10), 9);
+      const sc = (priceProfile[b] || 0)
+        + (b > 0 ? (priceProfile[b - 1] || 0) * 0.5 : 0)
+        + (b < 9 ? (priceProfile[b + 1] || 0) * 0.5 : 0);
+      return Math.min(sc * 3, 1);
+    }
+
+    // ── 5. Horizon profile: typical hold period (first BUY → REDEEM) ──────────
+    const firstBuyTs: Record<string, number> = {};
+    for (const a of sortedActivity) {
+      if (a.type === 'TRADE' && a.side === 'BUY' && a.conditionId && !firstBuyTs[a.conditionId])
+        firstBuyTs[a.conditionId] = a.timestamp || 0;
+    }
+    const horizonDaysArr: number[] = [];
+    for (const a of sortedActivity) {
+      if (a.type === 'REDEEM' && a.conditionId && firstBuyTs[a.conditionId]) {
+        const d = ((a.timestamp || 0) - firstBuyTs[a.conditionId]) / 86400;
+        if (d > 0 && d < 365) horizonDaysArr.push(d);
+      }
+    }
+    horizonDaysArr.sort((a, b) => a - b);
+    const medianHorizon = horizonDaysArr.length > 0
+      ? horizonDaysArr[Math.floor(horizonDaysArr.length / 2)] : 30;
+    function getHorizonScore(endDateStr: string | null | undefined): number {
+      if (!endDateStr) return 0.5;
+      const daysLeft = (new Date(endDateStr).getTime() - Date.now()) / 86400000;
+      if (daysLeft < 0) return 0;
+      return Math.exp(-0.5 * Math.pow((daysLeft - medianHorizon) / Math.max(medianHorizon * 0.8, 7), 2));
+    }
+
+    // ── 6. Liquidity floor from median bet size ────────────────────────────────
+    const buySizes = buyEvents.map((a: any) => a.usdcSize || 0).filter((u: number) => u > 0).sort((a: number, b: number) => a - b);
+    const medianBetSize  = buySizes.length > 0 ? buySizes[Math.floor(buySizes.length / 2)] : 20;
+    const liquidityFloor = medianBetSize * 20;
+
+    // ── 7. Merge candidate pools ───────────────────────────────────────────────
     const tradedConditionIds = new Set(activity.map((a: any) => a.conditionId).filter(Boolean));
+    const seenCandidateCids  = new Set<string>();
+    const candidateMarkets: any[] = [];
+    for (const m of [...(trendingMarkets as any[]), ...(activeMarkets as any[])]) {
+      if (!m.conditionId || seenCandidateCids.has(m.conditionId)) continue;
+      seenCandidateCids.add(m.conditionId);
+      candidateMarkets.push(m);
+    }
 
-    const suggestions = (activeMarkets as any[])
-      .filter((m: any) => m.conditionId && !tradedConditionIds.has(m.conditionId))
+    // ── 8. Score ───────────────────────────────────────────────────────────────
+    const scoredMarkets = candidateMarkets
+      .filter((m: any) => {
+        if (tradedConditionIds.has(m.conditionId)) return false;
+        const vol = parseFloat(String(m.volume)) || 0;
+        if (vol < liquidityFloor) return false;
+        // Hard gate: skip categories the user has never meaningfully traded
+        const cat = autoCategorize(m.question || '');
+        if (!allowedCategories.has(cat)) return false;
+        return true;
+      })
       .map((m: any) => {
-        const title = m.question || '';
-        const category = autoCategorize(title);
+        const title      = m.question || '';
+        const category   = autoCategorize(title);
+        const titleWords = title.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3 && !STOP_WORDS.has(w));
 
-        // Category score: proportion of user's buys in this category
-        const catScore = Math.min((catBuyCount[category] || 0) / totalBuyCount * 3, 1);
-
-        // Keyword score: how many of user's top keywords appear in this title
-        const titleWords = new Set(title.toLowerCase().split(/\W+/).filter((w: string) => w.length > 3));
-        const matchedKws = topKeywords.filter(kw => titleWords.has(kw));
-        const kwScore = Math.min(matchedKws.length / 3, 1);
-
-        // Price fit: is the YES price near user's average buy price?
         let yesPrice = 0.5;
         try {
           const rawPrices = m.outcomePrices;
-          const prices = typeof rawPrices === 'string' ? JSON.parse(rawPrices) : (Array.isArray(rawPrices) ? rawPrices : []);
+          const prices = typeof rawPrices === 'string' ? JSON.parse(rawPrices) : (rawPrices || []);
           yesPrice = parseFloat(prices[0]) || 0.5;
         } catch { /* keep 0.5 */ }
-        const priceScore = Math.max(0, 1 - Math.abs(yesPrice - avgBuyPrice) * 4);
+        if (yesPrice <= 0.01 || yesPrice >= 0.99) return null;
 
-        // Volume score: prefer more liquid markets
-        const vol = typeof m.volume === 'string' ? parseFloat(m.volume) || 0 : (m.volume || 0);
-        const volScore = Math.min(vol / 1000000, 1);
+        const vol    = parseFloat(String(m.volume))                    || 0;
+        const vol24h = parseFloat(String(m.volume24hr ?? m.volume24h)) || 0;
 
-        const score = catScore * 0.40 + kwScore * 0.35 + volScore * 0.15 + priceScore * 0.10;
+        const catScore = getCatAffinityScore(category);
+        const entScore = getCatEntityScore(category, titleWords); // category-scoped
+        const priceScr = getPriceScore(yesPrice);
+        const horizScr = getHorizonScore(m.endDate || m.endDateIso);
+
+        // News: tiny tiebreaker, only within allowed categories (already enforced by gate)
+        let rawNewsScore = 0;
+        const newsMatchWords: string[] = [];
+        for (const w of titleWords) {
+          const nw = (newsKwWeights as Record<string, number>)[w];
+          if (nw) { rawNewsScore += nw; newsMatchWords.push(w); }
+        }
+        const newsScr = Math.min(rawNewsScore / 2, 1);
+
+        // No trend or liquidity signals — the category gate already ensures relevance
+        const score = catScore * 0.35
+                    + entScore * 0.35
+                    + priceScr * 0.20
+                    + horizScr * 0.08
+                    + newsScr  * 0.02;
+
+        const priceMatch       = topBucketIndices.includes(Math.min(Math.floor(yesPrice * 10), 9));
+        const endStr           = m.endDate || m.endDateIso || null;
+        const daysToResolution = endStr
+          ? Math.round((new Date(endStr).getTime() - Date.now()) / 86400000)
+          : null;
 
         const reasons: string[] = [];
-        if (catBuyCount[category] > 0) {
-          reasons.push(`${category} (${((catBuyCount[category] / totalBuyCount) * 100).toFixed(0)}% of trades)`);
+        const cs = catStats[category];
+        if (cs && cs.usdc > 0) {
+          const pct    = Math.round((cs.usdc / totalUsdc) * 100);
+          const pnlStr = cs.pnl >= 0 ? `+$${Math.round(cs.pnl)}` : `-$${Math.abs(Math.round(cs.pnl))}`;
+          reasons.push(`${pct}% of vol in ${category} (${pnlStr})`);
         }
-        if (matchedKws.length > 0) {
-          reasons.push(`matches: ${matchedKws.slice(0, 3).join(', ')}`);
-        }
+        if (priceMatch) reasons.push(`${Math.round(yesPrice * 100)}¢ YES — your price range`);
+        const deduped = [...new Set(newsMatchWords)];
+        if (deduped.length > 0 && newsScr > 0.3) reasons.push(`news: ${deduped.slice(0, 2).join(', ')}`);
+
+        const vol24hSpike = vol > 1000 && (vol24h / vol) > 0.15;
 
         return {
           title,
@@ -435,13 +655,30 @@ export async function GET() {
           eventSlug: m.eventSlug || m.event?.slug || m.slug || '',
           category,
           volume: vol,
+          volume24h: vol24h,
           yesPrice,
           score,
-          reason: reasons.join(' · ') || category,
+          reason: reasons.slice(0, 2).join(' · ') || category,
+          newsMatch: deduped.slice(0, 3),
+          trending: vol24hSpike,
+          priceMatch,
+          daysToResolution,
         };
       })
-      .sort((a: any, b: any) => b.score - a.score)
-      .slice(0, 20);
+      .filter(Boolean)
+      .filter((m: any) => m.score > 0.05)
+      .sort((a: any, b: any) => b.score - a.score);
+
+    // De-duplicate near-identical titles (keep highest-scoring)
+    const seenTitleSigs = new Set<string>();
+    const suggestions = scoredMarkets.filter((m: any) => {
+      const sig = m.title.toLowerCase()
+        .split(/\W+/).filter((w: string) => w.length > 4 && !STOP_WORDS.has(w))
+        .slice(0, 4).sort().join('|');
+      if (seenTitleSigs.has(sig)) return false;
+      seenTitleSigs.add(sig);
+      return true;
+    }).slice(0, 25);
 
     // Build a map of condition_id → earning_percentage from the maker-filtered fetch
     const earningMap: Record<string, number> = {};
@@ -476,6 +713,69 @@ export async function GET() {
         category: autoCategorize(m.question),
       }));
 
+    // === Juicy LP Rewards ===
+    // Flatten all markets from both Gamma reward event pages
+    const gammaAllEvents: any[] = [
+      ...(Array.isArray(gammaRewardsPage1) ? gammaRewardsPage1 : []),
+      ...(Array.isArray(gammaRewardsPage2) ? gammaRewardsPage2 : []),
+    ];
+
+    interface JuicyRewardMarket {
+      question: string;
+      eventSlug: string;
+      marketSlug: string;
+      ratePerDay: number;
+      liquidity: number;
+      volume24h: number;
+      volumeTotal: number;
+      rewardApy: number;
+      volumeTurnover: number;
+      juiceScore: number;
+      minSize: number;
+      maxSpread: number;
+    }
+
+    const juicyRewards: JuicyRewardMarket[] = [];
+    for (const event of gammaAllEvents) {
+      const markets: any[] = Array.isArray(event.markets) ? event.markets : [event];
+      for (const m of markets) {
+        // Sum all reward entries for total daily rate
+        const rewards_arr: any[] = Array.isArray(m.clobRewards) ? m.clobRewards : [];
+        const totalDailyRate = rewards_arr.reduce((s: number, r: any) => s + (parseFloat(r.rewardsDailyRate) || 0), 0);
+        if (totalDailyRate < 1.0) continue;
+
+        const liquidity = parseFloat(m.liquidity) || 0;
+        if (liquidity < 100) continue;
+
+        const volume24h = parseFloat(m.volume24hr ?? m.volume24h) || 0;
+        const volumeTotal = parseFloat(m.volume) || 0;
+
+        const rewardApy = (totalDailyRate * 365 / liquidity) * 100;
+        const volumeTurnover = volume24h / liquidity;
+        const juiceScore = rewardApy / (1 + volumeTurnover);
+
+        const eventSlug = event.slug || m.eventSlug || '';
+        const marketSlug = m.slug || '';
+
+        juicyRewards.push({
+          question: m.question || event.title || '',
+          eventSlug,
+          marketSlug,
+          ratePerDay: totalDailyRate,
+          liquidity,
+          volume24h,
+          volumeTotal,
+          rewardApy,
+          volumeTurnover,
+          juiceScore,
+          minSize: parseFloat(m.rewardsMinSize) || 0,
+          maxSpread: parseFloat(m.rewardsMaxSpread) || 0,
+        });
+      }
+    }
+    juicyRewards.sort((a, b) => b.juiceScore - a.juiceScore);
+    const juicyRewardsTop = juicyRewards.slice(0, 30);
+
     return NextResponse.json({
       wallet: WALLET,
       updatedAt: new Date().toISOString(),
@@ -499,12 +799,19 @@ export async function GET() {
         weekMarkets: topMarkets(cutoff7d),
         monthMarkets: topMarkets(cutoff30d),
       },
+      volume: {
+        day:   volumeBreakdown(cutoff1d),
+        week:  volumeBreakdown(cutoff7d),
+        month: volumeBreakdown(cutoff30d),
+        all:   volumeBreakdown(0),
+      },
       categoryPnl,
       positions: categorized.sort((a: any, b: any) => b.currentValue - a.currentValue),
       rewards: {
         active: activeRewards,
         top: topRewards,
       },
+      juicyRewards: juicyRewardsTop,
       suggestions,
       activity: activity.map((a: any) => ({
         timestamp: a.timestamp,
