@@ -936,37 +936,15 @@ function VolumePanel({ volume }: { volume: DashboardData['volume'] }) {
               </div>
 
               <div className="flex flex-col gap-0.5 text-xs font-mono">
-                {/* USDC rows */}
-                <div className="text-gray-700 tracking-widest text-[10px] mt-0.5">USDC</div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600">BUY</span>
-                  <span className="text-green-400">{fmt$(v.buyVol)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">SELL</span>
-                  <span className="text-red-400">{fmt$(v.sellVol)}</span>
-                </div>
-                <div className="flex justify-between border-t border-gray-900 pt-0.5 mt-0.5">
-                  <span className="text-amber-700">TOTAL</span>
+                  <span className="text-amber-700">USDC</span>
                   <span className="text-white font-bold">{fmt$(v.total)}</span>
                 </div>
-
-                {/* Shares rows */}
-                <div className="text-gray-700 tracking-widest text-[10px] mt-1.5">SHARES</div>
                 <div className="flex justify-between">
-                  <span className="text-gray-600">BUY</span>
-                  <span className="text-green-400">{fmtSize(v.buyShares)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">SELL</span>
-                  <span className="text-red-400">{fmtSize(v.sellShares)}</span>
-                </div>
-                <div className="flex justify-between border-t border-gray-900 pt-0.5 mt-0.5">
-                  <span className="text-amber-700">TOTAL</span>
+                  <span className="text-amber-700">SHARES</span>
                   <span className="text-white font-bold">{fmtSize(v.totalShares)}</span>
                 </div>
-
-                <div className="flex justify-between mt-1 pt-0.5 border-t border-gray-900">
+                <div className="flex justify-between pt-0.5 border-t border-gray-900">
                   <span className="text-gray-700">TRADES</span>
                   <span className="text-gray-500">{v.tradeCount}</span>
                 </div>
