@@ -452,7 +452,7 @@ function JuicyRewardsPanel({ markets }: { markets: JuicyRewardMarket[] }) {
             </div>
             {(m.minSize > 0 || m.maxSpread > 0) && (
               <div className="text-[10px] text-gray-700 mt-0.5 pl-0">
-                MIN: ${m.minSize.toFixed(0)} · SPREAD: {(m.maxSpread * 100).toFixed(0)}¢
+                MIN: ${m.minSize.toFixed(0)} · SPREAD: {m.maxSpread.toFixed(1)}¢
               </div>
             )}
           </div>
