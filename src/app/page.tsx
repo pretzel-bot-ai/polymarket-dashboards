@@ -57,6 +57,7 @@ interface Activity {
 
 interface JuicyRewardMarket {
   question: string;
+  category: string;
   eventSlug: string;
   marketSlug: string;
   ratePerDay: number;
@@ -1117,10 +1118,21 @@ export default function Dashboard() {
         }
       </Panel>
 
-      {/* Juicy LP Markets */}
-      <Panel title={`JUICY LP MARKETS (${(juicyRewards ?? []).length})`} className="mb-3">
-        <JuicyRewardsPanel markets={juicyRewards ?? []} />
-      </Panel>
+      {/* Juicy LP Markets — all + crypto side by side */}
+      {(() => {
+        const all = juicyRewards ?? [];
+        const crypto = all.filter(m => m.category === 'Crypto');
+        return (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <Panel title={`JUICY LP MARKETS (${all.length})`}>
+              <JuicyRewardsPanel markets={all} />
+            </Panel>
+            <Panel title={`JUICY LP MARKETS — CRYPTO (${crypto.length})`}>
+              <JuicyRewardsPanel markets={crypto} />
+            </Panel>
+          </div>
+        );
+      })()}
 
       {/* Positions Table */}
       <Panel title={`OPEN POSITIONS (${portfolio.openCount} active / ${portfolio.totalPositions} total)`} className="mb-3">

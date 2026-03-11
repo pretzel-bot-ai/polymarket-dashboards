@@ -739,6 +739,7 @@ export async function GET() {
 
     interface JuicyRewardMarket {
       question: string;
+      category: string;
       eventSlug: string;
       marketSlug: string;
       ratePerDay: number;
@@ -792,6 +793,7 @@ export async function GET() {
 
       juicyRewards.push({
         question: m.question || '',
+        category: autoCategorize(m.question || ''),
         eventSlug: m.event_slug || '',
         marketSlug: m.market_slug || '',
         ratePerDay: totalDailyRate,
