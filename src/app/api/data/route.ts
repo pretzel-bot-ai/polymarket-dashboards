@@ -92,6 +92,24 @@ function autoCategorize(title: string): string {
   return 'Other';
 }
 
+// Exhaustively fetches all Polymarket reward markets (up to 20 pages × 100).
+// Cached for 1 hour — the list changes rarely and full coverage matters more than freshness.
+async function fetchAllRewardMarkets(): Promise<any[]> {
+  const pages = await Promise.all(
+    Array.from({ length: 20 }, (_, i) =>
+      fetch(`https://polymarket.com/api/rewards/markets?limit=100&offset=${i * 100}`, {
+        next: { revalidate: 3600 },
+      }).then(r => r.ok ? r.json() : {}).then((d: any) => Array.isArray(d?.data) ? d.data : []).catch(() => [])
+    )
+  );
+  const all: any[] = [];
+  for (const page of pages) {
+    if (page.length === 0) break; // stop at first empty page
+    all.push(...page);
+  }
+  return all;
+}
+
 async function fetchAllTrades(): Promise<any[]> {
   const results: any[] = [];
   let offset = 0;
@@ -217,12 +235,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const polyRewardsFetch = (offset: number) =>
-      fetch(`https://polymarket.com/api/rewards/markets?limit=100&offset=${offset}`, {
-        next: { revalidate: 300 },
-      }).then(r => r.json()).then(d => d?.data || []).catch(() => []);
-
-    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2, juicyRawP100, juicyRawP200, juicyRawP300, juicyRawP400] = await Promise.all([
+    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaRewardsPage1, gammaRewardsPage2, allRewardMarkets] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -236,8 +249,10 @@ export async function GET() {
       fetch(`https://polymarket.com/api/rewards/markets?tag_slug=crypto&limit=100`, {
         next: { revalidate: 300 },
       }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
-      // Unfiltered top-100 (fallback / supplement if tag filter is empty)
-      polyRewardsFetch(0),
+      // Unfiltered top-100 for existing LP rewards panel (5-min freshness)
+      fetch(`https://polymarket.com/api/rewards/markets?limit=100`, {
+        next: { revalidate: 300 },
+      }).then(r => r.json()).then(d => d?.data || []).catch(() => []),
       fetch(`https://data-api.polymarket.com/value?user=${WALLET}`, {
         next: { revalidate: 60 },
       }).then(r => r.json()).then(d => Array.isArray(d) ? d[0] : d).catch(() => null),
@@ -248,16 +263,13 @@ export async function GET() {
       fetchNewsKeywordWeights().catch(() => ({})),
       // Gamma events — used only for liquidity lookup (rewardsDailyRate in Gamma is a placeholder 0.001)
       fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=0', {
-        next: { revalidate: 300 },
+        next: { revalidate: 3600 },
       }).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch('https://gamma-api.polymarket.com/events?rewards=true&active=true&closed=false&limit=100&offset=100', {
-        next: { revalidate: 300 },
+        next: { revalidate: 3600 },
       }).then(r => r.ok ? r.json() : []).catch(() => []),
-      // Extra Polymarket rewards pages for broader juicy-panel coverage
-      polyRewardsFetch(100),
-      polyRewardsFetch(200),
-      polyRewardsFetch(300),
-      polyRewardsFetch(400),
+      // Exhaustive rewards market list — 20 pages × 100, cached 1 hour
+      fetchAllRewardMarkets(),
     ]);
 
     // Merge crypto tag-filtered results with top-raw, deduplicating by condition_id.
@@ -754,16 +766,8 @@ export async function GET() {
       }
     }
 
-    // Build rate map from all Polymarket rewards API pages (real rates)
-    // Pages: rewardsCryptoTag (tag=crypto), rewardsTopRaw (offset=0), + offsets 100-400
-    const allPolyRewardsMarkets: any[] = [
-      ...(rewardsCryptoTag as any[]),
-      ...(rewardsTopRaw as any[]),
-      ...(juicyRawP100 as any[]),
-      ...(juicyRawP200 as any[]),
-      ...(juicyRawP300 as any[]),
-      ...(juicyRawP400 as any[]),
-    ];
+    // allRewardMarkets: exhaustive list from fetchAllRewardMarkets() — up to 2000 markets, 1h cache
+    const allPolyRewardsMarkets: any[] = allRewardMarkets as any[];
 
     const seenJuicyCids = new Set<string>();
     const juicyRewards: JuicyRewardMarket[] = [];
