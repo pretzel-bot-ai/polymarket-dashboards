@@ -133,6 +133,7 @@ interface DashboardData {
     top: RewardsMarket[];
   };
   juicyRewards: JuicyRewardMarket[];
+  juicyRewardsCrypto: JuicyRewardMarket[];
   suggestions: SuggestedMarket[];
   activity: Activity[];
 }
@@ -1008,7 +1009,7 @@ export default function Dashboard() {
     );
   }
 
-  const { portfolio, pnl, volume, categoryPnl, positions, rewards, juicyRewards, suggestions, activity } = data;
+  const { portfolio, pnl, volume, categoryPnl, positions, rewards, juicyRewards, juicyRewardsCrypto, suggestions, activity } = data;
   const maxCatAbs = Math.max(...categoryPnl.map(c => Math.abs(c.total)), 1);
 
   // LP rewards display
@@ -1119,20 +1120,14 @@ export default function Dashboard() {
       </Panel>
 
       {/* Juicy LP Markets — all + crypto side by side */}
-      {(() => {
-        const all = juicyRewards ?? [];
-        const crypto = all.filter(m => m.category === 'Crypto');
-        return (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-            <Panel title={`JUICY LP MARKETS (${all.length})`}>
-              <JuicyRewardsPanel markets={all} />
-            </Panel>
-            <Panel title={`JUICY LP MARKETS — CRYPTO (${crypto.length})`}>
-              <JuicyRewardsPanel markets={crypto} />
-            </Panel>
-          </div>
-        );
-      })()}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <Panel title={`JUICY LP MARKETS (${(juicyRewards ?? []).length})`}>
+          <JuicyRewardsPanel markets={juicyRewards ?? []} />
+        </Panel>
+        <Panel title={`JUICY LP MARKETS — CRYPTO (${(juicyRewardsCrypto ?? []).length})`}>
+          <JuicyRewardsPanel markets={juicyRewardsCrypto ?? []} />
+        </Panel>
+      </div>
 
       {/* Positions Table */}
       <Panel title={`OPEN POSITIONS (${portfolio.openCount} active / ${portfolio.totalPositions} total)`} className="mb-3">

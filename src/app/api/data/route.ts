@@ -809,6 +809,7 @@ export async function GET() {
     }
     juicyRewards.sort((a, b) => b.juiceScore - a.juiceScore);
     const juicyRewardsTop = juicyRewards.slice(0, 30);
+    const juicyRewardsCrypto = juicyRewards.filter(m => m.category === 'Crypto').slice(0, 30);
 
     return NextResponse.json({
       wallet: WALLET,
@@ -846,6 +847,7 @@ export async function GET() {
         top: topRewards,
       },
       juicyRewards: juicyRewardsTop,
+      juicyRewardsCrypto: juicyRewardsCrypto,
       suggestions,
       activity: activity.map((a: any) => ({
         timestamp: a.timestamp,
