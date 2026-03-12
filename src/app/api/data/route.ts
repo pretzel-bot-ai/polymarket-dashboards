@@ -53,7 +53,15 @@ function autoCategorize(title: string): string {
     t.includes('memecoin') || t.includes('web3') || t.includes('token') ||
     t.includes('pump.fun') || t.includes('hyperliquid') || t.includes('stablecoin') ||
     t.includes('altcoin') || t.includes('robinhood') || t.includes('insider trading') ||
-    t.includes('dex') || t.includes('fdv') || t.includes('market cap') && t.includes('launch')
+    t.includes('dex') || t.includes('fdv') || (t.includes('market cap') && t.includes('launch')) ||
+    t.includes('xrp') || t.includes('ripple') || t.includes('dogecoin') || t.includes('doge') ||
+    t.includes('bnb') || t.includes('cardano') || t.includes('polkadot') ||
+    t.includes('avalanche') || t.includes('avax') || t.includes('chainlink') ||
+    t.includes('cosmos') || t.includes('near protocol') || t.includes('sui ') ||
+    t.includes('aptos') || t.includes('pepe') || t.includes('shiba') ||
+    t.includes('tron') || t.includes('stellar') || t.includes('monero') ||
+    t.includes('litecoin') || t.includes('tether') || t.includes('kraken') ||
+    t.includes('binance') || t.includes('microstrategy')
   ) return 'Crypto';
 
   // Pop Culture
@@ -826,17 +834,14 @@ export async function GET() {
       seenJuicyCids.add(cid);
 
       const totalDailyRate: number = (m.rewards_config || []).reduce((s: number, r: any) => s + (r.rate_per_day || 0), 0);
-      // Crypto markets have 1200+ markets sharing the pool — many have sub-$1/day rates but
-      // still excellent APY when competing LP capital is low. Use relaxed thresholds for them.
-      const isCryptoMarket = cryptoTaggedCids.has(cid);
-      if (totalDailyRate < (isCryptoMarket ? 0.10 : 1.0)) continue;
+      if (totalDailyRate < 1.0) continue;
 
       // market_competitiveness is the total LP size competing for rewards — the correct denominator
       // for APY. Gamma API liquidity is CLOB order-book depth and is 0 for most reward markets.
       const liquidity = (m.market_competitiveness || 0) > 0
         ? (m.market_competitiveness as number)
         : (liquidityMap.get(cid) || 0);
-      if (liquidity < (isCryptoMarket ? 10 : 100)) continue;
+      if (liquidity < 100) continue;
 
       const volume24h = parseFloat(m.volume_24hr) || 0;
       const volumeTotal = volumeTotalMap.get(cid) || 0;
@@ -865,7 +870,7 @@ export async function GET() {
     juicyRewards.sort((a, b) => b.juiceScore - a.juiceScore);
     const juicyRewardsTop = juicyRewards.slice(0, 30);
     const juicyRewardsCrypto = juicyRewards
-      .filter(m => m.category === 'Crypto' || m.isCryptoTagged)
+      .filter(m => m.category === 'Crypto' || (m.isCryptoTagged && m.category === 'Other'))
       .slice(0, 5);
     const _debugJuicy = {
       cryptoRawCount: cryptoTaggedCids.size,
