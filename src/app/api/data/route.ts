@@ -411,15 +411,20 @@ export async function GET() {
     }
 
     // Phase 4: book zero-resolution losses.
-    // Any remaining cost for a conditionId that no longer appears in the positions API
-    // means the market settled against the user (resolved to $0, no REDEEM issued).
-    // These are genuinely realised losses — reclassify them out of unrealised.
-    const positionConditionIds = new Set(
-      (Array.isArray(positions) ? positions : []).map((p: any) => p.conditionId).filter(Boolean)
-    );
+    // Markets that settled against the user leave orphaned cost basis with no REDEEM to drain it.
+    // Two cases to catch:
+    //  (a) cid completely absent from the positions API — market fully gone
+    //  (b) cid present but avgPrice×size < $0.01 — dust shares from floating-point rounding;
+    //      the market effectively resolved but a tiny residual prevents (a) from firing
+    const positionApiCost: Record<string, number> = {};
+    for (const p of (Array.isArray(positions) ? positions : [])) {
+      if (p.conditionId) positionApiCost[p.conditionId] = (p.avgPrice || 0) * (p.size || 0);
+    }
     let zeroResolutionLoss = 0;
     for (const [cid, state] of Object.entries(costBasis)) {
-      if (!positionConditionIds.has(cid) && state.totalCost > 0.01) {
+      const apiCost = positionApiCost[cid] ?? null;
+      const isResolved = apiCost === null || apiCost < 0.01;
+      if (isResolved && state.totalCost > 0.01) {
         zeroResolutionLoss -= state.totalCost; // negative: these are losses
         state.totalCost = 0;
         state.size = 0;
