@@ -428,7 +428,11 @@ export async function GET() {
 
     // All-time totals derived from full activity reconstruction.
     const remainingCost = Object.values(costBasis).reduce((s, st) => s + st.totalCost, 0);
-    const allTimeUnrealized = positionsValue - remainingCost; // open mark-to-market vs cost only
+    // Use positions API's own cashPnl (currentValue − avgPrice×size) as authoritative unrealized.
+    // The activity-based remainingCost can drift (truncated history, missing redeems, etc.)
+    // and was producing a ~$1.4k overstatement of losses vs Polymarket's own numbers.
+    const allTimeUnrealized = (Array.isArray(positions) ? positions : [])
+      .reduce((s: number, p: any) => s + (p.cashPnl || 0), 0);
 
     // Period P&L broken down by component
     function flowBreakdown(cutoff: number): { sells: number; redeems: number; misc: number } {
