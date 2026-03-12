@@ -826,14 +826,17 @@ export async function GET() {
       seenJuicyCids.add(cid);
 
       const totalDailyRate: number = (m.rewards_config || []).reduce((s: number, r: any) => s + (r.rate_per_day || 0), 0);
-      if (totalDailyRate < 1.0) continue;
+      // Crypto markets have 1200+ markets sharing the pool — many have sub-$1/day rates but
+      // still excellent APY when competing LP capital is low. Use relaxed thresholds for them.
+      const isCryptoMarket = cryptoTaggedCids.has(cid);
+      if (totalDailyRate < (isCryptoMarket ? 0.10 : 1.0)) continue;
 
       // market_competitiveness is the total LP size competing for rewards — the correct denominator
       // for APY. Gamma API liquidity is CLOB order-book depth and is 0 for most reward markets.
       const liquidity = (m.market_competitiveness || 0) > 0
         ? (m.market_competitiveness as number)
         : (liquidityMap.get(cid) || 0);
-      if (liquidity < 100) continue;
+      if (liquidity < (isCryptoMarket ? 10 : 100)) continue;
 
       const volume24h = parseFloat(m.volume_24hr) || 0;
       const volumeTotal = volumeTotalMap.get(cid) || 0;
@@ -863,7 +866,12 @@ export async function GET() {
     const juicyRewardsTop = juicyRewards.slice(0, 30);
     const juicyRewardsCrypto = juicyRewards
       .filter(m => m.category === 'Crypto' || m.isCryptoTagged)
-      .slice(0, 3);
+      .slice(0, 5);
+    const _debugJuicy = {
+      cryptoRawCount: cryptoTaggedCids.size,
+      cryptoInJuicy: juicyRewards.filter(m => m.isCryptoTagged).length,
+      juicyTotal: juicyRewards.length,
+    };
 
     return NextResponse.json({
       wallet: WALLET,
@@ -916,6 +924,7 @@ export async function GET() {
         eventSlug: a.eventSlug || null,
         transactionHash: a.transactionHash || null,
       })),
+      _debug: _debugJuicy,
     });
   } catch (e) {
     console.error('Dashboard API error:', e);
