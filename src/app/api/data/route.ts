@@ -100,6 +100,7 @@ async function fetchGammaLiquidityMarkets(): Promise<any[]> {
     Array.from({ length: 5 }, (_, i) =>
       fetch(`https://gamma-api.polymarket.com/markets?rewardsMinSize=1&active=true&closed=false&limit=500&offset=${i * 500}`, {
         next: { revalidate: 3600 },
+        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; PolyDash/1.0)' },
       }).then(r => r.ok ? r.json() : []).then((d: any) => Array.isArray(d) ? d : []).catch(() => [])
     )
   );
@@ -124,6 +125,24 @@ async function fetchAllRewardMarkets(): Promise<any[]> {
   const all: any[] = [];
   for (const page of pages) {
     if (page.length === 0) break; // stop at first empty page
+    all.push(...page);
+  }
+  return all;
+}
+
+// Fetches crypto-tagged reward markets specifically — there are 1200+ spread across all pages
+// so we can't rely on the unfiltered fetch to capture them. 30 pages × 100 = up to 3000.
+async function fetchCryptoRewardMarkets(): Promise<any[]> {
+  const pages = await Promise.all(
+    Array.from({ length: 30 }, (_, i) =>
+      fetch(`https://polymarket.com/api/rewards/markets?tag_slug=crypto&limit=100&offset=${i * 100}`, {
+        next: { revalidate: 3600 },
+      }).then(r => r.ok ? r.json() : {}).then((d: any) => Array.isArray(d?.data) ? d.data : []).catch(() => [])
+    )
+  );
+  const all: any[] = [];
+  for (const page of pages) {
+    if (page.length === 0) break;
     all.push(...page);
   }
   return all;
@@ -254,7 +273,7 @@ export async function GET() {
     const cutoff7d = now - 7 * 86400;
     const cutoff30d = now - 30 * 86400;
 
-    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaLiquidityMarkets, allRewardMarkets] = await Promise.all([
+    const [positions, trades, rewardsEarning, rewardsCryptoTag, rewardsTopRaw, valueData, activity, onChainUsdc, activeMarkets, trendingMarkets, newsKwWeights, gammaLiquidityMarkets, allRewardMarkets, cryptoRewardMarkets] = await Promise.all([
       fetch(
         `https://data-api.polymarket.com/positions?user=${WALLET}&sizeThreshold=0&limit=500`,
         { next: { revalidate: 60 } }
@@ -284,6 +303,8 @@ export async function GET() {
       fetchGammaLiquidityMarkets(),
       // Exhaustive rewards market list — 20 pages × 100, cached 1 hour
       fetchAllRewardMarkets(),
+      // Crypto-tagged rewards specifically — 30 pages × 100, captures 1200+ crypto markets
+      fetchCryptoRewardMarkets(),
     ]);
 
     // Merge crypto tag-filtered results with top-raw, deduplicating by condition_id.
@@ -765,6 +786,7 @@ export async function GET() {
       juiceScore: number;
       minSize: number;
       maxSpread: number;
+      isCryptoTagged: boolean;
     }
 
     // Build condition_id → liquidity/volume map from Gamma markets (flat list, up to 2500 markets)
@@ -778,8 +800,22 @@ export async function GET() {
       }
     }
 
-    // allRewardMarkets: exhaustive list from fetchAllRewardMarkets() — up to 2000 markets, 1h cache
-    const allPolyRewardsMarkets: any[] = allRewardMarkets as any[];
+    // Merge allRewardMarkets + cryptoRewardMarkets, deduplicating by condition_id.
+    // cryptoRewardMarkets is a targeted 30-page fetch that captures the 1200+ crypto LP markets
+    // that are spread too deep in the unfiltered list for the 20-page fetch to reach.
+    const seenMergeCids = new Set<string>();
+    const allPolyRewardsMarkets: any[] = [];
+    for (const m of [...(allRewardMarkets as any[]), ...(cryptoRewardMarkets as any[])]) {
+      if (!m.condition_id || seenMergeCids.has(m.condition_id)) continue;
+      seenMergeCids.add(m.condition_id);
+      allPolyRewardsMarkets.push(m);
+    }
+
+    // Build set of condition_ids that came from the crypto-tagged API endpoint
+    const cryptoTaggedCids = new Set<string>();
+    for (const m of (cryptoRewardMarkets as any[])) {
+      if (m.condition_id) cryptoTaggedCids.add(m.condition_id);
+    }
 
     const seenJuicyCids = new Set<string>();
     const juicyRewards: JuicyRewardMarket[] = [];
@@ -792,7 +828,11 @@ export async function GET() {
       const totalDailyRate: number = (m.rewards_config || []).reduce((s: number, r: any) => s + (r.rate_per_day || 0), 0);
       if (totalDailyRate < 1.0) continue;
 
-      const liquidity = liquidityMap.get(cid) || 0;
+      // market_competitiveness is the total LP size competing for rewards — the correct denominator
+      // for APY. Gamma API liquidity is CLOB order-book depth and is 0 for most reward markets.
+      const liquidity = (m.market_competitiveness || 0) > 0
+        ? (m.market_competitiveness as number)
+        : (liquidityMap.get(cid) || 0);
       if (liquidity < 100) continue;
 
       const volume24h = parseFloat(m.volume_24hr) || 0;
@@ -816,11 +856,14 @@ export async function GET() {
         juiceScore,
         minSize: m.rewards_min_size || 0,
         maxSpread: m.rewards_max_spread || 0,
+        isCryptoTagged: cryptoTaggedCids.has(cid),
       });
     }
     juicyRewards.sort((a, b) => b.juiceScore - a.juiceScore);
     const juicyRewardsTop = juicyRewards.slice(0, 30);
-    const juicyRewardsCrypto = juicyRewards.filter(m => m.category === 'Crypto').slice(0, 30);
+    const juicyRewardsCrypto = juicyRewards
+      .filter(m => m.category === 'Crypto' || m.isCryptoTagged)
+      .slice(0, 3);
 
     return NextResponse.json({
       wallet: WALLET,

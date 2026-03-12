@@ -912,6 +912,106 @@ function SuggestedMarketsPanel({ suggestions }: { suggestions: SuggestedMarket[]
   );
 }
 
+function KellySizingPanel({ portfolioValue }: { portfolioValue: number }) {
+  const [prob, setProb] = useState('');   // user's estimated win % (0-100)
+  const [price, setPrice] = useState(''); // market price in cents (0-100)
+
+  const p = parseFloat(prob) / 100;
+  const c = parseFloat(price) / 100;
+  const valid = !isNaN(p) && !isNaN(c) && p > 0 && p < 1 && c > 0 && c < 1;
+  const kelly = valid ? (p - c) / (1 - c) : null;
+  const hasEdge = kelly !== null && kelly > 0;
+
+  const tiers = [
+    { label: '½ KELLY', mult: 0.5 },
+    { label: '⅔ KELLY', mult: 2 / 3 },
+    { label: 'FULL KELLY', mult: 1.0 },
+  ];
+
+  const inputCls =
+    'w-full bg-black border border-amber-900 text-white text-xs font-mono px-2 py-1 focus:outline-none focus:border-amber-500 placeholder-gray-700';
+
+  return (
+    <Panel title="KELLY SIZING">
+      {/* Two inputs side-by-side */}
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="flex flex-col gap-1">
+          <label className="text-amber-700 text-xs tracking-widest">YOUR WIN PROB %</label>
+          <input
+            type="number" min="1" max="99" step="1"
+            placeholder="e.g. 65"
+            value={prob}
+            onChange={e => setProb(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-amber-700 text-xs tracking-widest">MARKET PRICE ¢</label>
+          <input
+            type="number" min="1" max="99" step="1"
+            placeholder="e.g. 55"
+            value={price}
+            onChange={e => setPrice(e.target.value)}
+            className={inputCls}
+          />
+        </div>
+      </div>
+
+      {/* Portfolio reference (read-only) */}
+      <div className="flex justify-between text-xs font-mono mb-3 border-t border-gray-900 pt-2">
+        <span className="text-gray-600">PORTFOLIO</span>
+        <span className="text-gray-400">{fmt$(portfolioValue)}</span>
+      </div>
+
+      {/* Results area */}
+      {!valid && (
+        <div className="text-gray-700 text-xs font-mono text-center py-3">
+          enter win prob + market price
+        </div>
+      )}
+      {valid && !hasEdge && (
+        <div className="text-red-700 text-xs font-mono text-center py-3">
+          NO EDGE — market price ≥ your probability
+        </div>
+      )}
+      {valid && hasEdge && kelly !== null && (
+        <div className="flex flex-col gap-1.5">
+          {tiers.map(({ label, mult }) => {
+            const pct = kelly * mult * 100;
+            const dollars = kelly * mult * portfolioValue;
+            const isFull = mult === 1.0;
+            const isHalf = mult === 0.5;
+            return (
+              <div
+                key={label}
+                className={`border p-2 flex flex-col gap-0.5 ${
+                  isFull ? 'border-amber-600' : isHalf ? 'border-gray-800' : 'border-amber-900'
+                }`}
+              >
+                <div className={`text-xs font-bold tracking-widest ${
+                  isFull ? 'text-amber-400' : isHalf ? 'text-gray-500' : 'text-amber-700'
+                }`}>{label}</div>
+                <div className="flex justify-between text-xs font-mono">
+                  <span className={isFull ? 'text-white font-bold' : 'text-gray-300'}>
+                    {pct.toFixed(1)}%
+                  </span>
+                  <span className={isFull ? 'text-amber-300 font-bold' : 'text-gray-400'}>
+                    {fmt$(dollars)}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+          {/* Edge summary footnote */}
+          <div className="text-gray-600 text-xs font-mono text-right pt-1">
+            edge: {((p - c) * 100).toFixed(1)}pp · full kelly: {(kelly * 100).toFixed(1)}%
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function VolumePanel({ volume }: { volume: DashboardData['volume'] }) {
   const periods: { label: string; key: keyof typeof volume }[] = [
     { label: '1D', key: 'day' },
@@ -1060,9 +1160,10 @@ export default function Dashboard() {
         <PnlStatsPanel portfolio={portfolio} pnl={pnl} />
       </div>
 
-      {/* Volume Panel */}
-      <div className="mb-3">
+      {/* Volume + Kelly Sizing */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <VolumePanel volume={volume} />
+        <KellySizingPanel portfolioValue={portfolio.totalValue} />
       </div>
 
       {/* Middle Row: PnL by Period + Category */}
