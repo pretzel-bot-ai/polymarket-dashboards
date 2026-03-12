@@ -338,13 +338,42 @@ export async function GET() {
 
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
 
-    // Category PnL
+    // Category PnL — realized from full activity reconstruction (not positions API which only
+    // reflects still-held positions); unrealized from positions API cashPnl (authoritative).
     const catMap: Record<string, { unrealized: number; realized: number }> = {};
+
+    // Realized: SELL event profits
+    for (const sp of sellProfits) {
+      const cat = autoCategorize(sp.title);
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += sp.profit;
+    }
+    // Realized: REDEEM event profits
+    for (const a of sortedActivity) {
+      if (a.type !== 'REDEEM' || !a.conditionId) continue;
+      const avgCost = finalAvgCost[a.conditionId] ?? 0;
+      const profit = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
+      const cat = autoCategorize(a.title || '');
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += profit;
+    }
+    // Realized: zero-resolution losses (computed in Phase 4, already categorized)
+    for (const [cat, loss] of Object.entries(catZeroResLoss)) {
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += loss; // loss is already negative
+    }
+    // Realized: YIELD and REWARD events → Other category
+    for (const a of sortedActivity) {
+      if (a.type !== 'YIELD' && a.type !== 'REWARD') continue;
+      if (!catMap['Other']) catMap['Other'] = { unrealized: 0, realized: 0 };
+      catMap['Other'].realized += a.usdcSize || 0;
+    }
+    // Unrealized: positions API cashPnl per category
     for (const p of categorized) {
       if (!catMap[p.category]) catMap[p.category] = { unrealized: 0, realized: 0 };
       catMap[p.category].unrealized += p.cashPnl || 0;
-      catMap[p.category].realized += p.realizedPnl || 0;
     }
+
     const categoryPnl = Object.entries(catMap)
       .map(([cat, v]) => ({ category: cat, unrealized: v.unrealized, realized: v.realized, total: v.unrealized + v.realized }))
       .sort((a, b) => b.total - a.total);
@@ -420,12 +449,20 @@ export async function GET() {
     for (const p of (Array.isArray(positions) ? positions : [])) {
       if (p.conditionId) positionApiCost[p.conditionId] = (p.avgPrice || 0) * (p.size || 0);
     }
+    // Build cid→title lookup from activity so we can categorise zero-res losses
+    const cidTitleMap: Record<string, string> = {};
+    for (const a of sortedActivity) {
+      if (a.conditionId && a.title && !cidTitleMap[a.conditionId]) cidTitleMap[a.conditionId] = a.title;
+    }
     let zeroResolutionLoss = 0;
+    const catZeroResLoss: Record<string, number> = {}; // per-category allocation
     for (const [cid, state] of Object.entries(costBasis)) {
       const apiCost = positionApiCost[cid] ?? null;
       const isResolved = apiCost === null || apiCost < 0.01;
       if (isResolved && state.totalCost > 0.01) {
         zeroResolutionLoss -= state.totalCost; // negative: these are losses
+        const cat = autoCategorize(cidTitleMap[cid] || '');
+        catZeroResLoss[cat] = (catZeroResLoss[cat] || 0) - state.totalCost;
         state.totalCost = 0;
         state.size = 0;
       }
