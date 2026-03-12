@@ -338,46 +338,6 @@ export async function GET() {
 
     const openCount = categorized.filter((p: any) => p.currentValue > 0).length;
 
-    // Category PnL — realized from full activity reconstruction (not positions API which only
-    // reflects still-held positions); unrealized from positions API cashPnl (authoritative).
-    const catMap: Record<string, { unrealized: number; realized: number }> = {};
-
-    // Realized: SELL event profits
-    for (const sp of sellProfits) {
-      const cat = autoCategorize(sp.title);
-      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
-      catMap[cat].realized += sp.profit;
-    }
-    // Realized: REDEEM event profits
-    for (const a of sortedActivity) {
-      if (a.type !== 'REDEEM' || !a.conditionId) continue;
-      const avgCost = finalAvgCost[a.conditionId] ?? 0;
-      const profit = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
-      const cat = autoCategorize(a.title || '');
-      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
-      catMap[cat].realized += profit;
-    }
-    // Realized: zero-resolution losses (computed in Phase 4, already categorized)
-    for (const [cat, loss] of Object.entries(catZeroResLoss)) {
-      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
-      catMap[cat].realized += loss; // loss is already negative
-    }
-    // Realized: YIELD and REWARD events → Other category
-    for (const a of sortedActivity) {
-      if (a.type !== 'YIELD' && a.type !== 'REWARD') continue;
-      if (!catMap['Other']) catMap['Other'] = { unrealized: 0, realized: 0 };
-      catMap['Other'].realized += a.usdcSize || 0;
-    }
-    // Unrealized: positions API cashPnl per category
-    for (const p of categorized) {
-      if (!catMap[p.category]) catMap[p.category] = { unrealized: 0, realized: 0 };
-      catMap[p.category].unrealized += p.cashPnl || 0;
-    }
-
-    const categoryPnl = Object.entries(catMap)
-      .map(([cat, v]) => ({ category: cat, unrealized: v.unrealized, realized: v.realized, total: v.unrealized + v.realized }))
-      .sort((a, b) => b.total - a.total);
-
     // === Cost-basis reconstruction from activity BUY/SELL history ===
     // We use the activity API (not the trades API — which returns only the last ~30 records)
     // because activity contains the full BUY/SELL history across all positions.
@@ -467,6 +427,44 @@ export async function GET() {
         state.size = 0;
       }
     }
+
+    // Category PnL — realized from full activity reconstruction (not positions API which only
+    // reflects still-held positions); unrealized from positions API cashPnl (authoritative).
+    const catMap: Record<string, { unrealized: number; realized: number }> = {};
+    // Realized: SELL event profits
+    for (const sp of sellProfits) {
+      const cat = autoCategorize(sp.title);
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += sp.profit;
+    }
+    // Realized: REDEEM event profits
+    for (const a of sortedActivity) {
+      if (a.type !== 'REDEEM' || !a.conditionId) continue;
+      const avgCost = finalAvgCost[a.conditionId] ?? 0;
+      const profit = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
+      const cat = autoCategorize(a.title || '');
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += profit;
+    }
+    // Realized: zero-resolution losses (from Phase 4, already categorized)
+    for (const [cat, loss] of Object.entries(catZeroResLoss)) {
+      if (!catMap[cat]) catMap[cat] = { unrealized: 0, realized: 0 };
+      catMap[cat].realized += loss; // loss is already negative
+    }
+    // Realized: YIELD and REWARD events → Other category
+    for (const a of sortedActivity) {
+      if (a.type !== 'YIELD' && a.type !== 'REWARD') continue;
+      if (!catMap['Other']) catMap['Other'] = { unrealized: 0, realized: 0 };
+      catMap['Other'].realized += a.usdcSize || 0;
+    }
+    // Unrealized: positions API cashPnl per category
+    for (const p of categorized) {
+      if (!catMap[p.category]) catMap[p.category] = { unrealized: 0, realized: 0 };
+      catMap[p.category].unrealized += p.cashPnl || 0;
+    }
+    const categoryPnl = Object.entries(catMap)
+      .map(([cat, v]) => ({ category: cat, unrealized: v.unrealized, realized: v.realized, total: v.unrealized + v.realized }))
+      .sort((a, b) => b.total - a.total);
 
     // All-time totals derived from full activity reconstruction.
     const remainingCost = Object.values(costBasis).reduce((s, st) => s + st.totalCost, 0);
