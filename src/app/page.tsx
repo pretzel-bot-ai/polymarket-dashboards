@@ -252,7 +252,12 @@ function BarChart({ data, maxAbs }: { data: CategoryPnl[]; maxAbs: number }) {
   );
 }
 
-function PnlChartPanel({ data }: { data: PnlChartPoint[] }) {
+function PnlChartPanel({ data, zeroRes, unrealized, net }: {
+  data: PnlChartPoint[];
+  zeroRes: number;
+  unrealized: number;
+  net: number;
+}) {
   if (data.length === 0) return <div className="text-gray-600 text-xs">No P&L history yet.</div>;
 
   const PAD = { t: 12, r: 12, b: 28, l: 52 };
@@ -288,6 +293,7 @@ function PnlChartPanel({ data }: { data: PnlChartPoint[] }) {
   );
 
   return (
+    <>
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ fontFamily: 'monospace' }}>
       {/* Zero baseline */}
       <line x1={PAD.l} y1={zeroY} x2={W - PAD.r} y2={zeroY} stroke="#78350f" strokeWidth="1" strokeDasharray="4,3" />
@@ -324,6 +330,13 @@ function PnlChartPanel({ data }: { data: PnlChartPoint[] }) {
         {fmtK(lastVal)}
       </text>
     </svg>
+    <div className="mt-1 flex gap-4 text-xs text-gray-600 font-mono">
+      <span>exits: <span className="text-amber-600">{fmtK(data[data.length - 1]?.cumulative ?? 0)}</span></span>
+      {zeroRes !== 0 && <span>zero-res: <span className="text-red-700">{fmtK(zeroRes)}</span></span>}
+      <span>unrealized: <span className={unrealized >= 0 ? 'text-green-700' : 'text-red-700'}>{fmtK(unrealized)}</span></span>
+      <span className="ml-auto">NET: <span className={net >= 0 ? 'text-green-400' : 'text-red-400'} style={{fontWeight:'bold'}}>{fmtK(net)}</span></span>
+    </div>
+    </>
   );
 }
 
@@ -1374,7 +1387,12 @@ export default function Dashboard() {
       {/* P&L Chart + Win Rate */}
       <div className="grid grid-cols-[2fr_1fr] gap-3 mb-3">
         <Panel title="P&L OVER TIME (CUMULATIVE REALIZED)">
-          <PnlChartPanel data={data.pnlChart} />
+          <PnlChartPanel
+            data={data.pnlChart}
+            zeroRes={data.pnl.all.zeroRes ?? 0}
+            unrealized={data.portfolio.unrealizedPnl}
+            net={data.portfolio.totalPnl}
+          />
         </Panel>
         <Panel title="WIN RATE STATS">
           <WinRatePanel wr={data.winRate} />
