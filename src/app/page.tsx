@@ -18,6 +18,24 @@ interface Position {
   category: string;
   eventSlug: string;
   slug: string;
+  ageDays: number | null;
+}
+
+interface PnlChartPoint {
+  date: string;
+  daily: number;
+  cumulative: number;
+}
+
+interface WinRate {
+  trades: number;
+  wins: number;
+  losses: number;
+  rate: number;
+  avgWin: number;
+  avgLoss: number;
+  bestWin: number;
+  worstLoss: number;
 }
 
 interface CategoryPnl {
@@ -136,6 +154,8 @@ interface DashboardData {
   juicyRewardsCrypto: JuicyRewardMarket[];
   suggestions: SuggestedMarket[];
   activity: Activity[];
+  pnlChart: PnlChartPoint[];
+  winRate: WinRate;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -232,7 +252,117 @@ function BarChart({ data, maxAbs }: { data: CategoryPnl[]; maxAbs: number }) {
   );
 }
 
-type SortKey = 'value' | 'pnl' | 'pct' | 'size';
+function PnlChartPanel({ data }: { data: PnlChartPoint[] }) {
+  if (data.length === 0) return <div className="text-gray-600 text-xs">No P&L history yet.</div>;
+
+  const PAD = { t: 12, r: 12, b: 28, l: 52 };
+  const W = 900, H = 180;
+  const innerW = W - PAD.l - PAD.r;
+  const innerH = H - PAD.t - PAD.b;
+
+  const values = data.map(d => d.cumulative);
+  const minV = Math.min(0, ...values);
+  const maxV = Math.max(0, ...values);
+  const range = maxV - minV || 1;
+
+  const xOf = (i: number) => PAD.l + (i / Math.max(data.length - 1, 1)) * innerW;
+  const yOf = (v: number) => PAD.t + (1 - (v - minV) / range) * innerH;
+
+  const points = data.map((d, i) => `${xOf(i)},${yOf(d.cumulative)}`).join(' ');
+  const zeroY = yOf(0);
+  const lastVal = data[data.length - 1].cumulative;
+  const lastX = xOf(data.length - 1);
+  const lastY = yOf(lastVal);
+
+  // Y-axis ticks
+  const yTicks = [minV, minV + range * 0.33, minV + range * 0.66, maxV];
+  const fmtK = (v: number) => {
+    const sign = v > 0 ? '+' : v < 0 ? '-' : '';
+    return `${sign}$${(Math.abs(v) / 1000).toFixed(1)}k`;
+  };
+
+  // X-axis: ~7 evenly spaced labels
+  const xTickCount = Math.min(7, data.length);
+  const xTicks = Array.from({ length: xTickCount }, (_, i) =>
+    Math.round(i * (data.length - 1) / Math.max(xTickCount - 1, 1))
+  );
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ fontFamily: 'monospace' }}>
+      {/* Zero baseline */}
+      <line x1={PAD.l} y1={zeroY} x2={W - PAD.r} y2={zeroY} stroke="#78350f" strokeWidth="1" strokeDasharray="4,3" />
+
+      {/* Y-axis ticks */}
+      {yTicks.map((v, i) => (
+        <g key={i}>
+          <line x1={PAD.l - 4} y1={yOf(v)} x2={PAD.l} y2={yOf(v)} stroke="#78350f" strokeWidth="1" />
+          <text x={PAD.l - 6} y={yOf(v) + 4} textAnchor="end" fill="#d97706" fontSize="9">{fmtK(v)}</text>
+        </g>
+      ))}
+
+      {/* P&L line */}
+      <polyline points={points} fill="none" stroke="#f59e0b" strokeWidth="1.5" />
+
+      {/* X-axis ticks */}
+      {xTicks.map((idx, i) => {
+        const d = data[idx];
+        const x = xOf(idx);
+        const label = d.date.slice(5); // MM-DD
+        return (
+          <g key={i}>
+            <line x1={x} y1={H - PAD.b} x2={x} y2={H - PAD.b + 3} stroke="#78350f" strokeWidth="1" />
+            <text x={x} y={H - PAD.b + 12} textAnchor="middle" fill="#78350f" fontSize="8">{label}</text>
+          </g>
+        );
+      })}
+
+      {/* Final value label */}
+      <text
+        x={lastX + 4} y={lastVal >= 0 ? lastY - 4 : lastY + 12}
+        fill={lastVal >= 0 ? '#4ade80' : '#f87171'} fontSize="10" fontWeight="bold"
+      >
+        {fmtK(lastVal)}
+      </text>
+    </svg>
+  );
+}
+
+function WinRatePanel({ wr }: { wr: WinRate }) {
+  const fmt$ = (n: number) => {
+    const sign = n >= 0 ? '+' : '-';
+    return `${sign}$${Math.abs(n).toFixed(0)}`;
+  };
+  return (
+    <div className="grid grid-cols-2 gap-2 text-xs">
+      <div className="col-span-2 flex items-baseline gap-2">
+        <span className={`text-3xl font-bold font-mono ${wr.rate >= 0.5 ? 'text-green-400' : 'text-red-400'}`}>
+          {(wr.rate * 100).toFixed(1)}%
+        </span>
+        <span className="text-gray-500">
+          {wr.wins}W / {wr.losses}L / {wr.trades} trades
+        </span>
+      </div>
+      <div>
+        <div className="text-amber-600 tracking-widest">AVG WIN</div>
+        <div className="text-green-400 font-mono font-bold">{fmt$(wr.avgWin)}</div>
+      </div>
+      <div>
+        <div className="text-amber-600 tracking-widest">AVG LOSS</div>
+        <div className="text-red-400 font-mono font-bold">{fmt$(wr.avgLoss)}</div>
+      </div>
+      <div>
+        <div className="text-amber-600 tracking-widest">BEST WIN</div>
+        <div className="text-green-300 font-mono">{fmt$(wr.bestWin)}</div>
+      </div>
+      <div>
+        <div className="text-amber-600 tracking-widest">WORST LOSS</div>
+        <div className="text-red-300 font-mono">{fmt$(wr.worstLoss)}</div>
+      </div>
+    </div>
+  );
+}
+
+type SortKey = 'value' | 'pnl' | 'pct' | 'size' | 'age';
 type SortDir = 'asc' | 'desc';
 
 function PositionsTable({ positions }: { positions: Position[] }) {
@@ -255,6 +385,7 @@ function PositionsTable({ positions }: { positions: Position[] }) {
       pnl: p => p.cashPnl,
       pct: p => p.percentPnl,
       size: p => p.size,
+      age: p => p.ageDays ?? -1,
     };
     const va = map[sortKey](a), vb = map[sortKey](b);
     return sortDir === 'desc' ? vb - va : va - vb;
@@ -276,7 +407,7 @@ function PositionsTable({ positions }: { positions: Position[] }) {
 
   return (
     <div>
-      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs text-amber-600 tracking-widest pb-1 border-b border-amber-900 mb-1">
+      <div className="grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs text-amber-600 tracking-widest pb-1 border-b border-amber-900 mb-1">
         <div>MARKET</div>
         <div>SIDE</div>
         <SortHdr k="size" label="SIZE" />
@@ -284,11 +415,12 @@ function PositionsTable({ positions }: { positions: Position[] }) {
         <div>AVG/CUR</div>
         <SortHdr k="pnl" label="CASH P&L" />
         <SortHdr k="pct" label="%" />
+        <SortHdr k="age" label="AGE" />
       </div>
       {display.map((p, i) => (
         <div
           key={i}
-          className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5 border-b border-gray-900 hover:bg-amber-900/10 transition-colors ${p.redeemable ? 'opacity-50' : ''}`}
+          className={`grid grid-cols-[2fr_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5 border-b border-gray-900 hover:bg-amber-900/10 transition-colors ${p.redeemable ? 'opacity-50' : ''}`}
         >
           <div className="text-gray-200 truncate" title={p.title}>
             {truncate(p.title, 50)}
@@ -304,6 +436,7 @@ function PositionsTable({ positions }: { positions: Position[] }) {
           </div>
           <div className={`font-mono ${pnlColor(p.cashPnl)}`}>{fmt$(p.cashPnl)}</div>
           <div className={`font-mono ${pnlColor(p.percentPnl)}`}>{fmtPct(p.percentPnl)}</div>
+          <div className="text-gray-400 font-mono">{p.ageDays != null ? `${p.ageDays}d` : '—'}</div>
         </div>
       ))}
       {sorted.length > 15 && (
@@ -1235,6 +1368,16 @@ export default function Dashboard() {
         </Panel>
         <Panel title={`JUICY LP MARKETS — CRYPTO (${(juicyRewardsCrypto ?? []).length})`}>
           <JuicyRewardsPanel markets={juicyRewardsCrypto ?? []} />
+        </Panel>
+      </div>
+
+      {/* P&L Chart + Win Rate */}
+      <div className="grid grid-cols-[2fr_1fr] gap-3 mb-3">
+        <Panel title="P&L OVER TIME (CUMULATIVE REALIZED)">
+          <PnlChartPanel data={data.pnlChart} />
+        </Panel>
+        <Panel title="WIN RATE STATS">
+          <WinRatePanel wr={data.winRate} />
         </Panel>
       </div>
 

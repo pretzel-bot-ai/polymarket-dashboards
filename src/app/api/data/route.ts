@@ -559,6 +559,51 @@ export async function GET() {
     const allTimeRealized = realizedFlow(0) + zeroResolutionLoss;
     const allTimeNet      = allTimeRealized + allTimeUnrealized;
 
+    // === P&L Chart ===
+    function tsToDate(ts: number): string {
+      return new Date(ts * 1000).toISOString().slice(0, 10);
+    }
+    const dailyPnl: Record<string, number> = {};
+    for (const sp of sellProfits) {
+      const d = tsToDate(sp.timestamp);
+      dailyPnl[d] = (dailyPnl[d] || 0) + sp.profit;
+    }
+    for (const a of sortedActivity) {
+      if (a.type !== 'REDEEM' || !a.conditionId) continue;
+      const avgCost = finalAvgCost[a.conditionId] ?? 0;
+      const profit = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
+      const d = tsToDate(a.timestamp || 0);
+      dailyPnl[d] = (dailyPnl[d] || 0) + profit;
+    }
+    let cum = 0;
+    const pnlChart = Object.keys(dailyPnl).sort().map(date => {
+      cum += dailyPnl[date];
+      return { date, daily: dailyPnl[date], cumulative: cum };
+    });
+
+    // === Win Rate Stats ===
+    const allExits: number[] = [
+      ...sellProfits.map(s => s.profit),
+      ...sortedActivity
+        .filter((a: any) => a.type === 'REDEEM' && a.conditionId)
+        .map((a: any) => {
+          const avgCost = finalAvgCost[a.conditionId] ?? 0;
+          return (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
+        }),
+    ];
+    const wins   = allExits.filter(p => p > 0);
+    const losses = allExits.filter(p => p < 0);
+    const winRate = {
+      trades:    allExits.length,
+      wins:      wins.length,
+      losses:    losses.length,
+      rate:      allExits.length > 0 ? wins.length / allExits.length : 0,
+      avgWin:    wins.length   > 0 ? wins.reduce((s, p) => s + p, 0) / wins.length : 0,
+      avgLoss:   losses.length > 0 ? losses.reduce((s, p) => s + p, 0) / losses.length : 0,
+      bestWin:   wins.length   > 0 ? Math.max(...wins) : 0,
+      worstLoss: losses.length > 0 ? Math.min(...losses) : 0,
+    };
+
     // === Suggested Markets ===
     const buyEvents = sortedActivity.filter((a: any) => a.type === 'TRADE' && a.side === 'BUY');
 
@@ -665,6 +710,12 @@ export async function GET() {
       if (a.type === 'TRADE' && a.side === 'BUY' && a.conditionId && !firstBuyTs[a.conditionId])
         firstBuyTs[a.conditionId] = a.timestamp || 0;
     }
+    // Annotate open positions with age (days since first BUY)
+    for (const p of categorized) {
+      const ts = firstBuyTs[(p as any).conditionId];
+      (p as any).ageDays = ts ? Math.floor((now - ts) / 86400) : null;
+    }
+
     const horizonDaysArr: number[] = [];
     for (const a of sortedActivity) {
       if (a.type === 'REDEEM' && a.conditionId && firstBuyTs[a.conditionId]) {
@@ -969,6 +1020,8 @@ export async function GET() {
       juicyRewards: juicyRewardsTop,
       juicyRewardsCrypto: juicyRewardsCrypto,
       suggestions,
+      pnlChart,
+      winRate,
       activity: activity.map((a: any) => ({
         timestamp: a.timestamp,
         type: a.type,
