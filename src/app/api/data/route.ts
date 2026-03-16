@@ -82,7 +82,7 @@ function autoCategorize(title: string): string {
     t.includes('nasa') || t.includes('rocket') || t.includes('satellite') ||
     t.includes('fda') || t.includes('vaccine') || t.includes('clinical trial') ||
     t.includes('drug approval') || t.includes('cancer') || t.includes('nuclear') ||
-    (t.includes('ai') && (t.includes('model') || t.includes('benchmark') || t.includes('release')))
+    (/\bai\b/.test(t) && (t.includes('model') || t.includes('benchmark') || t.includes('release')))
   ) return 'Science';
 
   // Business
@@ -357,22 +357,31 @@ export async function GET() {
     const sortedActivity = [...activity].sort((a: any, b: any) => (a.timestamp || 0) - (b.timestamp || 0));
 
     for (const a of sortedActivity) {
-      if (a.type !== 'TRADE') continue;
+      if (a.type !== 'TRADE' && a.type !== 'MERGE' && a.type !== 'CONVERSION') continue;
       const cid = a.conditionId;
       if (!cid) continue;
       if (!costBasis[cid]) costBasis[cid] = { size: 0, totalCost: 0 };
       const state = costBasis[cid];
       const size  = Math.abs(a.size  || 0);
-      const price = a.price || 0;
 
-      if (a.side === 'BUY') {
-        state.totalCost += size * price;
+      if (a.type === 'TRADE' && a.side === 'BUY') {
+        state.totalCost += size * (a.price || 0);
         state.size      += size;
-      } else if (a.side === 'SELL') {
+      } else if (a.type === 'TRADE' && a.side === 'SELL') {
         const avgCost = state.size > 0 ? state.totalCost / state.size : 0;
         sellProfits.push({
           timestamp: a.timestamp || 0,
-          profit:    size * (price - avgCost),
+          profit:    size * ((a.price || 0) - avgCost),
+          title:     a.title || '?',
+        });
+        state.totalCost = Math.max(0, state.totalCost - size * avgCost);
+        state.size      = Math.max(0, state.size      - size);
+      } else if (a.type === 'MERGE' || a.type === 'CONVERSION') {
+        // Merging YES+NO pairs back to USDC, or converting a position — treat like a SELL
+        const avgCost = state.size > 0 ? state.totalCost / state.size : 0;
+        sellProfits.push({
+          timestamp: a.timestamp || 0,
+          profit:    (a.usdcSize || 0) - size * avgCost,
           title:     a.title || '?',
         });
         state.totalCost = Math.max(0, state.totalCost - size * avgCost);
@@ -407,7 +416,7 @@ export async function GET() {
     //      the market effectively resolved but a tiny residual prevents (a) from firing
     const positionApiCost: Record<string, number> = {};
     for (const p of (Array.isArray(positions) ? positions : [])) {
-      if (p.conditionId) positionApiCost[p.conditionId] = (p.avgPrice || 0) * (p.size || 0);
+      if (p.conditionId) positionApiCost[p.conditionId] = (positionApiCost[p.conditionId] || 0) + (p.avgPrice || 0) * (p.size || 0);
     }
     // Build cid→title lookup from activity so we can categorise zero-res losses
     const cidTitleMap: Record<string, string> = {};
@@ -484,7 +493,7 @@ export async function GET() {
         if ((a.timestamp || 0) < cutoff) continue;
         if (a.type === 'REDEEM') {
           const avgCost = finalAvgCost[a.conditionId] ?? 0;
-          redeems += (a.usdcSize || 0) - (a.size || 0) * avgCost;
+          redeems += (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
         } else if (a.type === 'YIELD' || a.type === 'REWARD') {
           misc += a.usdcSize || 0;
         }
@@ -529,7 +538,7 @@ export async function GET() {
         let title = a.title || '?';
         if (a.type === 'REDEEM') {
           const avgCost = finalAvgCost[a.conditionId] ?? 0;
-          profit = (a.usdcSize || 0) - (a.size || 0) * avgCost;
+          profit = (a.usdcSize || 0) - Math.abs(a.size || 0) * avgCost;
         } else if (a.type === 'YIELD') {
           profit = a.usdcSize || 0;
           title = 'USDC Yield';
@@ -940,7 +949,7 @@ export async function GET() {
         day:   { ...flowBreakdown(cutoff1d),  total: realizedFlow(cutoff1d)  },
         week:  { ...flowBreakdown(cutoff7d),  total: realizedFlow(cutoff7d)  },
         month: { ...flowBreakdown(cutoff30d), total: realizedFlow(cutoff30d) },
-        all:   { ...flowBreakdown(0),         total: allTimeRealized         },
+        all:   { ...flowBreakdown(0),         total: allTimeRealized, zeroRes: zeroResolutionLoss },
         dayMarkets: topMarkets(cutoff1d),
         weekMarkets: topMarkets(cutoff7d),
         monthMarkets: topMarkets(cutoff30d),

@@ -121,7 +121,7 @@ interface DashboardData {
     day:   { sells: number; redeems: number; misc: number; total: number };
     week:  { sells: number; redeems: number; misc: number; total: number };
     month: { sells: number; redeems: number; misc: number; total: number };
-    all:   { sells: number; redeems: number; misc: number; total: number };
+    all:   { sells: number; redeems: number; misc: number; total: number; zeroRes?: number };
     dayMarkets: MarketPnl[];
     weekMarkets: MarketPnl[];
     monthMarkets: MarketPnl[];
@@ -523,7 +523,7 @@ function PnlStatsPanel({ portfolio, pnl }: {
         ))}
       </div>
 
-      <div className="p-3 grid grid-cols-6 gap-2">
+      <div className="p-3 grid grid-cols-7 gap-2">
         <div className="flex flex-col gap-1">
           <div className="text-amber-500 text-xs tracking-widest">SELLS</div>
           <div className={`text-lg font-bold font-mono ${pnlColor(period.sells)}`}>{fmt$(period.sells)}</div>
@@ -538,6 +538,14 @@ function PnlStatsPanel({ portfolio, pnl }: {
           <div className="text-amber-500 text-xs tracking-widest">YLD + RWD</div>
           <div className={`text-lg font-bold font-mono ${pnlColor(period.misc)}`}>{fmt$(period.misc)}</div>
           <div className="text-gray-500 text-xs">{realizedSub}</div>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="text-amber-500 text-xs tracking-widest">ZERO RES</div>
+          {tab === 'all'
+            ? <div className={`text-lg font-bold font-mono ${pnlColor(pnl.all.zeroRes ?? 0)}`}>{fmt$(pnl.all.zeroRes ?? 0)}</div>
+            : <div className="text-lg font-bold font-mono text-gray-600">—</div>
+          }
+          <div className="text-gray-500 text-xs">{tab === 'all' ? 'all-time' : 'n/a'}</div>
         </div>
         <div className="flex flex-col gap-1 border-l border-amber-900 pl-2">
           <div className="text-amber-500 text-xs tracking-widest">REALIZED</div>
