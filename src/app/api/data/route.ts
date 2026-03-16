@@ -216,7 +216,7 @@ async function fetchActivity(): Promise<any[]> {
   const results: any[] = [];
   let offset = 0;
   const limit = 200;
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 20; i++) {
     const res = await fetch(
       `https://data-api.polymarket.com/activity?user=${WALLET}&limit=${limit}&offset=${offset}`,
       { next: { revalidate: 60 } }
