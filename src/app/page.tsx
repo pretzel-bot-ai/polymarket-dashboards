@@ -848,11 +848,79 @@ function ActivityFeed({ activity }: { activity: Activity[] }) {
   );
 }
 
+function HoldersTable({ holders, side, yesPrice }: { holders: any[], side: 'YES' | 'NO', yesPrice: number }) {
+  if (!holders || holders.length === 0) return null;
+  const riskColor = (r: string) =>
+    r === 'red' ? 'text-red-400' : r === 'yellow' ? 'text-yellow-400' : 'text-green-400';
+  const riskTitle = (r: string) =>
+    r === 'red' ? 'HIGH — likely to liquidate for cash' :
+    r === 'yellow' ? 'MEDIUM — may liquidate' :
+    'LOW — unlikely to liquidate';
+  return (
+    <div className="mt-3">
+      <div className="text-[10px] tracking-widest mb-1 font-bold" style={{ color: side === 'YES' ? '#4ade80' : '#f87171' }}>
+        TOP {holders.length} {side} HOLDERS
+        <span className="text-gray-600 font-normal ml-2">@ {side === 'YES' ? (yesPrice * 100).toFixed(1) : ((1 - yesPrice) * 100).toFixed(1)}¢</span>
+      </div>
+      <div className="grid grid-cols-[1.8fr_0.9fr_0.7fr_0.7fr_0.5fr_0.25fr] gap-x-2 text-[9px] text-amber-800 tracking-widest pb-0.5 border-b border-amber-950">
+        <div>NAME</div><div>POS VALUE</div><div>POS%</div><div>CASH%</div><div>HELD</div><div>●</div>
+      </div>
+      {holders.map((h: any, i: number) => (
+        <div key={i} className="grid grid-cols-[1.8fr_0.9fr_0.7fr_0.7fr_0.5fr_0.25fr] gap-x-2 text-[9px] py-0.5 border-b border-gray-950 hover:bg-amber-950/20">
+          <div className="text-gray-300 truncate font-mono" title={h.proxyWallet}>{truncate(h.name || h.proxyWallet, 20)}</div>
+          <div className="text-gray-400 font-mono">${fmtSize(h.positionValue)}</div>
+          <div className={`font-mono ${h.positionPct > 60 ? 'text-amber-400' : 'text-gray-400'}`}>
+            {h.positionPct != null ? h.positionPct.toFixed(1) + '%' : '—'}
+          </div>
+          <div className="text-gray-400 font-mono">{h.cashPct != null ? h.cashPct.toFixed(1) + '%' : '—'}</div>
+          <div className="text-gray-500 font-mono">{h.holdDays > 0 ? `${h.holdDays}d` : '<1d'}</div>
+          <div className={`font-bold ${riskColor(h.liquidationRisk)}`} title={riskTitle(h.liquidationRisk)}>●</div>
+        </div>
+      ))}
+      <div className="text-[9px] text-gray-700 mt-1">
+        ● <span className="text-green-700">green</span>=unlikely · <span className="text-yellow-700">yellow</span>=possible · <span className="text-red-700">red</span>=likely to liquidate for cash
+      </div>
+    </div>
+  );
+}
+
 function MarketLookupPanel() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [holdersMap, setHoldersMap] = useState<Record<string, any>>({});
+  const [holdersLoading, setHoldersLoading] = useState(false);
+
+  function getYesPrice(outcomePrices: any): number {
+    try {
+      const prices = typeof outcomePrices === 'string' ? JSON.parse(outcomePrices) : (outcomePrices || []);
+      return parseFloat(prices[0]) || 0.5;
+    } catch { return 0.5; }
+  }
+
+  async function fetchHolders(data: any) {
+    setHoldersLoading(true);
+    setHoldersMap({});
+    try {
+      const pairs = await Promise.all(
+        data.markets.map(async (m: any) => {
+          if (!m.conditionId) return null;
+          const yp = getYesPrice(m.outcomePrices);
+          try {
+            const r = await fetch(`/api/holders?conditionId=${m.conditionId}&yesPrice=${yp}`);
+            const h = await r.json();
+            return [m.conditionId, h.error ? null : h] as [string, any];
+          } catch { return null; }
+        })
+      );
+      const map: Record<string, any> = {};
+      for (const pair of pairs) { if (pair) map[pair[0]] = pair[1]; }
+      setHoldersMap(map);
+    } finally {
+      setHoldersLoading(false);
+    }
+  }
 
   async function lookup() {
     const trimmed = url.trim();
@@ -860,11 +928,13 @@ function MarketLookupPanel() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setHoldersMap({});
     try {
       const res = await fetch(`/api/market?url=${encodeURIComponent(trimmed)}`);
       const data = await res.json();
       if (data.error) throw new Error(data.error);
       setResult(data);
+      fetchHolders(data);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -877,13 +947,6 @@ function MarketLookupPanel() {
     try {
       return new Date(s).toLocaleDateString('en-GB', { year: 'numeric', month: 'short', day: 'numeric' });
     } catch { return s; }
-  }
-
-  function getYesPrice(outcomePrices: any): number {
-    try {
-      const prices = typeof outcomePrices === 'string' ? JSON.parse(outcomePrices) : (outcomePrices || []);
-      return parseFloat(prices[0]) || 0.5;
-    } catch { return 0.5; }
   }
 
   return (
@@ -932,24 +995,39 @@ function MarketLookupPanel() {
           </div>
 
           {result.markets.length === 1 ? (
-            <div className="flex gap-6 text-xs border-t border-gray-900 pt-2">
-              <div>
-                <span className="text-amber-600 mr-1">YES</span>
-                <span className="text-green-400 font-mono">{(getYesPrice(result.markets[0].outcomePrices) * 100).toFixed(1)}¢</span>
+            <div>
+              <div className="flex gap-6 text-xs border-t border-gray-900 pt-2">
+                <div>
+                  <span className="text-amber-600 mr-1">YES</span>
+                  <span className="text-green-400 font-mono">{(getYesPrice(result.markets[0].outcomePrices) * 100).toFixed(1)}¢</span>
+                </div>
+                <div>
+                  <span className="text-amber-600 mr-1">NO</span>
+                  <span className="text-red-400 font-mono">{((1 - getYesPrice(result.markets[0].outcomePrices)) * 100).toFixed(1)}¢</span>
+                </div>
+                <div>
+                  <span className="text-amber-600 mr-1">LIQUIDITY</span>
+                  <span className="text-gray-300 font-mono">${fmtSize(result.liquidity)}</span>
+                </div>
+                <div>
+                  <span className={result.markets[0].active ? 'text-green-500' : result.markets[0].closed ? 'text-gray-600' : 'text-amber-600'}>
+                    {result.markets[0].closed ? '● CLOSED' : result.markets[0].active ? '● ACTIVE' : '○ INACTIVE'}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-amber-600 mr-1">NO</span>
-                <span className="text-red-400 font-mono">{((1 - getYesPrice(result.markets[0].outcomePrices)) * 100).toFixed(1)}¢</span>
-              </div>
-              <div>
-                <span className="text-amber-600 mr-1">LIQUIDITY</span>
-                <span className="text-gray-300 font-mono">${fmtSize(result.liquidity)}</span>
-              </div>
-              <div>
-                <span className={result.markets[0].active ? 'text-green-500' : result.markets[0].closed ? 'text-gray-600' : 'text-amber-600'}>
-                  {result.markets[0].closed ? '● CLOSED' : result.markets[0].active ? '● ACTIVE' : '○ INACTIVE'}
-                </span>
-              </div>
+              {holdersLoading && (
+                <div className="text-amber-800 text-[10px] mt-3 animate-pulse">loading holder analysis…</div>
+              )}
+              {!holdersLoading && holdersMap[result.markets[0].conditionId] && (() => {
+                const h = holdersMap[result.markets[0].conditionId];
+                const yp = getYesPrice(result.markets[0].outcomePrices);
+                return (
+                  <div className="border-t border-gray-900 mt-2 pt-1">
+                    <HoldersTable holders={h.yes} side="YES" yesPrice={yp} />
+                    <HoldersTable holders={h.no} side="NO" yesPrice={yp} />
+                  </div>
+                );
+              })()}
             </div>
           ) : (
             <div>
@@ -961,12 +1039,24 @@ function MarketLookupPanel() {
               </div>
               {result.markets.map((m: any, i: number) => {
                 const yp = getYesPrice(m.outcomePrices);
+                const mHolders = holdersMap[m.conditionId];
                 return (
-                  <div key={i} className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5 border-b border-gray-900">
-                    <div className="text-gray-300 truncate" title={m.question}>{truncate(m.question, 48)}</div>
-                    <div className="text-green-400 font-mono">{(yp * 100).toFixed(0)}¢</div>
-                    <div className="text-gray-400 font-mono">${fmtSize(m.volume24h)}</div>
-                    <div className="text-gray-400 font-mono">${fmtSize(m.volume)}</div>
+                  <div key={i} className="border-b border-gray-900">
+                    <div className="grid grid-cols-[2fr_1fr_1fr_1fr] gap-x-3 text-xs py-0.5">
+                      <div className="text-gray-300 truncate" title={m.question}>{truncate(m.question, 48)}</div>
+                      <div className="text-green-400 font-mono">{(yp * 100).toFixed(0)}¢</div>
+                      <div className="text-gray-400 font-mono">${fmtSize(m.volume24h)}</div>
+                      <div className="text-gray-400 font-mono">${fmtSize(m.volume)}</div>
+                    </div>
+                    {holdersLoading && !mHolders && (
+                      <div className="text-amber-900 text-[9px] pb-1 animate-pulse">loading holders…</div>
+                    )}
+                    {mHolders && (
+                      <div className="pb-2">
+                        <HoldersTable holders={mHolders.yes} side="YES" yesPrice={yp} />
+                        <HoldersTable holders={mHolders.no} side="NO" yesPrice={yp} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
